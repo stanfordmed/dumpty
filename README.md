@@ -1,4 +1,4 @@
-# Code-name: **Dumpty**
+# Dumpty
 **A tool for bulk migration of large on-premise databases to BigQuery** 
 
 [![Apache license](https://img.shields.io/badge/license-apache-brightgreen.svg)](LICENSE.txt)
