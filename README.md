@@ -12,7 +12,7 @@ This utility was created from our need to dump large (> 10 TB) databases as quic
     - A temporary database created from a .bak file
 - You have terabytes of data to upload, and only a few hours to do it, but lots of CPU and RAM at your disposal.
 
-When executed, Dumpty will create a "local" (in-memory) Apache Spark cluster. With a provided configuration and list of tables it will launch Spark jobs to extract the SQL as compressed JSON, streamed directly to a GCS bucket, and load them into a BigQuery table if desired. JSON is the only format "officially" supported by this utility as it is the only format which supports the DATETIME type natively in BigQuery.
+When executed, Dumpty will create a "local" (in-memory) Apache Spark server. With a provided configuration and list of tables it will launch Spark jobs to extract the SQL as compressed JSON, streamed directly to a GCS bucket, and load them into a BigQuery table if desired. JSON is the only format "officially" supported by this utility as it is the only format which supports the DATETIME type natively in BigQuery.
 
 Again, you are create a Spark cluster __in memory__, so a host with at least 32 CPU and 32GB of RAM is recommended for large databases. It has been tested against MSSQL Server and Oracle. This program can place _enormous_ load on the target database, so ask your DBA/admin for permission first.
 
@@ -26,23 +26,23 @@ Based on min and max values of the PK, and the row count, it will decide on one 
   - The PK is numeric and appears to be evenly distributed (eg. auto-incrementing):
     - The table will be extracted using the `partitionColumn`, `lowerBounds`, `upperBounds`, and `numPartitions` features native to Spark.
 - "**Julienne**"
-  - The PK is numeric, but badly skewed, or non-numeric:
+  - The PK is numeric, but badly skewed, or non-numeric, eg.:
     - The table will be sliced into partitions of _n_ rows each by taking the row count and dividing it by the number of desired partitions (to determine _n_).
     - The boundaries of each partition are determined by taking the ROW_NUMBER() of each row (ordered by the PK) modulo _n_. This results in partitions of equal size, even if the PK is badly skewed. 
-    - This process is inherently slow, so the results are saved to a local database `tables.json` for future runs.
+    - This process is inherently slow, so the results are saved to a local database for future runs.
 - **No partitioning** 
   - There are fewer than 1,000,000 rows in the table:
     - The table be extracted using a single thread
 
-At first run, the number of partitions is determined by taking `(row count / 1,000,000)`. So 100M rows will be extracted into 100 partitions. The next run will tune the partition count based on the actual extracted file size and the configuration parameter `target_partition_size_bytes`.
+At first run, the number of partitions is determined by taking `(row count / 1,000,000)`. So 100M rows will be extracted into 100 partitions. The next run will adjust the partition count based on the size of the previous extract, using the configuration parameter `target_partition_size_bytes`.
 
-For example, the first extract for a table with 22M rows will be assigned 22 partitions. If sum total of the `part-*.json.gz` files is less than `target_partition_size_bytes`, then the partition recommendation will be for a single partition for the next run. This will free threads for larger / more complicated tables.
+For example, the first extract for a table with 22M rows will be assigned 22 partitions. If sum total of the `part-*.json.gz` files is less than `target_partition_size_bytes`, then the partition recommendation will be for a single partition for the next run. This will free threads for larger / more complicated tables. Conversely if those 22 partitions created files much larger than `target_partition_size_bytes` the number of partitions will be increased. The size of the final partition file is important as BigQuery loads compressed JSON files using a single thread for each file (unlike Avro, Parquet). 
 
-Eventually, the introspection data will start to drift from the actual state of the database. For this reason the introspection can be set to 'expire' using the configuration parameter `introspection_expire_s`. If the introspection has expired, the table row count, min and max values will be recalculated. Note there should never be any loss of data from using 'old' introspection data, it just means that likely the last partition will continously grow in size while the other remain the same size. 
+Eventually, the introspection data will start to drift from the actual state of the database. For this reason the introspection can be set to 'expire' using the configuration parameter `introspection_expire_s`. If the introspection has expired, the table min, max, and partition row markers will be recalculated. Note there should never be any loss of data from using 'old' introspection data, it just means that the last partition will continously grow in size while the other remain the same size. 
 
 For very large databases, you will want to extract the data once to determine the correct partitioning sizes, and again to extract with the new partition sizing. Subsequent executions will use the new partition sizing unless it is set to expire. 
 
-A simple database (`tables.json`) contains the introspection data. Deleting this file will trigger re-introspection of the database. Running two or more instances of Dumpty will result in corruption of `tables.json`. 
+A simple database (`tables.json`) contains the introspection data. Deleting this file will trigger re-introspection of the database. Running two or more instances of Dumpty can/will result in corruption of `tables.json`. 
 
 ## Installation
 
