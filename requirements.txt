@@ -1,0 +1,17 @@
+pyaml>=21.10.1
+pyspark>=3.3.1
+PyYAML>=6.0
+tomli>=2.0.1
+Jinja2>=3.1.2
+dataclass-wizard==0.22.2
+google-cloud-bigquery>=3.4.2
+pandas>=1.5.2
+SQLAlchemy!=1.4.33,<2.0,>=1.4.20
+pysparkextra>=0.4.2
+alive-progress>=3.0.1
+psutil>=5.9.4
+tenacity>=8.1.0
+google-cloud-storage>=2.7.0
+tinydb>=4.7.1
+pyodbc>=4.0.35
+tinydb-serialization>=2.1.0

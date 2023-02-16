@@ -1,0 +1,19 @@
+{
+    "version": "0.1.0",
+    "configurations": [
+        {
+            "name": "Test yaml",
+            "type": "python",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal",
+            "args": [
+                "--config",
+                "test.yaml",
+                "--credentials",
+                "credentials.json"
+            ],
+            "justMyCode": true
+        }
+    ]
+}
