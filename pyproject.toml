@@ -56,8 +56,8 @@ dependencies = [
   "alive-progress>=3.0.1",
   "psutil>=5.9.4",
   "tenacity>=8.1.0",
-  "google-cloud-storage>=2.7.0"
-  "tinydb-serialization>=2.1.0"
+  "google-cloud-storage>=2.7.0",
+  "tinydb-serialization>=2.1.0",
   "pyodbc>=4.0.35"
 ]
 
