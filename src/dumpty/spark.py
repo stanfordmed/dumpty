@@ -77,6 +77,7 @@ class LocalSpark:
 
         spark.sparkContext.setLocalProperty("callSite.short", n_table_name)
 
+        logger.debug(f"Extracting {table_name} as {n_table_name}")
         df.write.save(f"{uri}/{n_table_name}", format=self.config.format, mode="overwrite",
                       timestampFormat=self.config.timestamp_format, compression=self.config.compression)
 

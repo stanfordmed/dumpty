@@ -118,18 +118,23 @@ def introspect(table: Document, sql: Sql):
     start_time = datetime.now()
     logger.debug(f"Introspecting {sql.schema}.{table_name}")
 
-    # Get primary key info, min, max, row count
-    rows = 0
-    pk = sql.get_pk(table_name)
+    intro_table = sql.introspect_table(table_name)
+    pk = intro_table.primary_key[0] if intro_table.primary_key else None
     if pk is not None:
         table['pk'] = pk.name
         (min, max, rows) = sql.get_min_max_count(table_name, pk.name)
         table['min'] = min
         table['max'] = max
-        table['rows'] = rows
         is_numeric = isinstance(pk.type, sqltypes.Numeric)
+    else:
+        rows = sql.get_row_count(table_name)
+    table['rows'] = rows
 
     if pk is not None and rows > 1e6:  # don't bother splitting any tables smaller than 1m rows
+        table['min'] = min
+        table['max'] = max
+        is_numeric = isinstance(pk.type, sqltypes.Numeric)
+
         partitions = table.get('partitions')
 
         if not partitions:
@@ -226,7 +231,8 @@ def extract_and_load(table: Document, config: Config, spark: LocalSpark, sql: Sq
             table['storage_bytes'] = storage_bytes
 
         # Get JSON-formatted table schema
-        schema = sql.get_schema(table_name)
+        itable = sql.introspect_table(table_name)
+        schema = sql.get_schema(itable)
         json_schema = json.dumps(schema, indent=4)
         if "gs://" not in config.target_uri:
             with open(f"{config.target_uri}/{normalize_str(table_name)}/schema.json", "wt") as f:
@@ -238,10 +244,11 @@ def extract_and_load(table: Document, config: Config, spark: LocalSpark, sql: Sq
         # Load into BigQuery
         if config.target_dataset is not None:
             # Load from GCS into BQ
+            normalized_table_name = normalize_str(table_name)
             bq_rows: int = 0
             bq_bytes: int = 0
             if config.target_dataset is not None:
-                bq_rows, bq_bytes = retryer(bigquery_load, extract_uri, f"{config.target_dataset}.{table_name}",
+                bq_rows, bq_bytes = retryer(bigquery_load, extract_uri, f"{config.target_dataset}.{normalized_table_name}",
                                             config.spark.format, schema, "Loaded by dumpty")
             table['rows_loaded'] = bq_rows
             table['bytes_loaded'] = bq_bytes
@@ -297,7 +304,8 @@ def main(args=None):
         if len(new_tables) > 0:
             # Make sure these tables _actually_ exist in the SQL database before going any further
             sql_tables = sql.get_tables()
-            not_found = [t for t in new_tables if t not in sql_tables]
+            not_found = [
+                t for t in new_tables if t not in sql_tables and "##" not in t]
             if len(not_found) > 0:
                 logger.error(
                     f"Tables listed in config schema were not found in SQL schema {config.schema}: {','.join(not_found)}")
