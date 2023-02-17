@@ -1,10 +1,8 @@
-from typing import Tuple
 from google.cloud.bigquery import Dataset, DatasetReference, Table, TableReference, LoadJob, Client as BigqueryClient, SourceFormat, LoadJobConfig, CreateDisposition, WriteDisposition, SchemaField
 from google.cloud.exceptions import NotFound
 from google.cloud.storage import Blob, Bucket, Client as StorageClient
 from urllib.parse import urlparse
 import re
-import logging
 import os
 from pathlib import PurePath
 from dumpty import logger
@@ -61,7 +59,7 @@ def bigquery_create_dataset(dataset_ref: str, description: str = None, location:
     try:
         dataset_ref: Dataset = client.get_dataset(ref)
         if drop:
-            logging.info(f"Dropping dataset {dataset_ref.dataset_id}")
+            logger.info(f"Dropping dataset {dataset_ref.dataset_id}")
             client.delete_dataset(
                 dataset_ref, not_found_ok=True, delete_contents=True)
         else:
@@ -72,10 +70,10 @@ def bigquery_create_dataset(dataset_ref: str, description: str = None, location:
     dataset_ref.location = location
     dataset_ref.labels = labels
     if exists:
-        logging.info(f"Updating dataset {dataset_ref.dataset_id}")
+        logger.info(f"Updating dataset {dataset_ref.dataset_id}")
         return client.update_dataset(dataset_ref, fields=["description", "location", "labels"])
     else:
-        logging.info(f"Creating dataset {dataset_ref.dataset_id}")
+        logger.info(f"Creating dataset {dataset_ref.dataset_id}")
         return client.create_dataset(dataset_ref)
 
 

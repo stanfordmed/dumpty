@@ -1,9 +1,9 @@
+import pandas as pd
+import re
 from decimal import Decimal
 from typing import Tuple, List
 from sqlalchemy import Column, MetaData, Table, inspect
 from sqlalchemy.engine import Engine, Dialect, Inspector
-import pandas as pd
-import re
 from abc import ABC, abstractmethod
 from dumpty import logger
 

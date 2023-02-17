@@ -1,14 +1,14 @@
+import logging
 import argparse
 import json
-import os
 import logging
-from typing import List
+import os
 import psutil
 import sys
 from math import ceil, floor
 from datetime import datetime
 from pathlib import Path
-from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from jinja2 import Environment, FileSystemLoader, Template
 from sqlalchemy import create_engine, engine_from_config
 from sqlalchemy.sql import sqltypes
@@ -25,7 +25,6 @@ from dumpty.util import normalize_str, filter_shuffle
 from tinydb_serialization.serializers import DateTimeSerializer
 from tinydb_serialization import SerializationMiddleware
 from tinydb.middlewares import CachingMiddleware
-from tinydb import where
 from dumpty import logger
 
 
@@ -67,9 +66,6 @@ def config_from_args(argv) -> Config:
                         help='project.dataset to load extract (requires gs:// uri)')
 
     args = parser.parse_args(argv)
-
-    # Set default log level to INFO
-    logger.setLevel(logging.INFO)
 
     # Parses YAML as a bare Jina2 template (no round-trip parsing)
     template: Template = Environment(loader=FileSystemLoader('.')).from_string(
@@ -353,11 +349,11 @@ def main(args=None):
     with open(config.log_file, "w") as outfile:
         outfile.write(json.dumps(summary, indent=4, default=str))
 
-    logging.info(
+    logger.info(
         f"Extract summary saved to {config.log_file}")
 
     if not len(summary['warnings']) == 0:
-        logging.warning(
+        logger.warning(
             f"{len(summary['tables'])} tables loaded, with warnings")
 
 
