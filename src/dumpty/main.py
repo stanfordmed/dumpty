@@ -218,7 +218,7 @@ def main(args=None):
                             raise ex
                         summary['tables'].append(extracted_table.name)
                         if config.target_dataset is not None:
-                            if not extracted_table.consistent:
+                            if not extracted_table.consistent():
                                 warning = f"{extracted_table.name}: row count mismatch (expected: {extracted_table.rows}, loaded: {extracted_table.rows_loaded}+"
                                 logger.warning(warning)
                                 summary.warnings.append(warning)
@@ -233,7 +233,7 @@ def main(args=None):
         (summary['end_date'] - summary['start_date']).total_seconds())
 
     if config.target_dataset is not None:
-        summary['consistent'] = all(x.consistent for x in completed)
+        summary['consistent'] = all(x.consistent() for x in completed)
         summary['bq_bytes'] = sum(x.bq_bytes for x in completed)
 
     if config.target_uri is not None:

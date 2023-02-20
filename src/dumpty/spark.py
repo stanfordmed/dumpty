@@ -39,7 +39,7 @@ class LocalSpark:
     def full_extract(self, extract: Extract, uri: str) -> str:
         session = self._spark_session
         # spark.sparkContext.setJobGroup(table.name, "full extract")
-        if extract.predicates is not None:
+        if extract.predicates is not None and len(extract.predicates) > 0:
             session.sparkContext.setJobDescription(
                 f'{extract.name} ({len(extract.predicates)} predicates)')
             df = session.read.jdbc(
@@ -48,7 +48,7 @@ class LocalSpark:
                 predicates=extract.predicates,
                 properties=self._jdbc_config.properties
             )
-        elif extract.partition_column is not None and min is not None and max is not None:
+        elif extract.partition_column is not None and extract.min is not None and extract.max is not None:
             session.sparkContext.setJobDescription(
                 f'{extract.name} (partitioned on [{extract.partition_column}] from {extract.min} to {extract.max})')
             df = session.read.jdbc(

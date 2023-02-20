@@ -161,17 +161,18 @@ class Introspector:
                 if is_numeric:
                     qry = session.query(func.max(pk).label("max"),
                                         func.min(pk).label("min"),
-                                        func.count().label("count"))
+                                        func.count().label("count")).select_from(table)
                     res = qry.one()
                     extract.max = int(res.max)
                     extract.min = int(res.min)
                     extract.rows = int(res.count)
                 else:
                     qry = session.query(func.count().label("count"))
-                    extract.rows = int(qry.scalar())
+                    extract.rows = int(qry.scalar()).select_from(table)
             else:
                 # If no PK we'll just dump the entire table in a single thread
-                qry = session.query(func.count().label("count"))
+                qry = session.query(func.count().label(
+                    "count")).select_from(table)
                 extract.rows = int(qry.scalar())
 
         # Only partition tables with a PK and rows exceeding partition_row_min
@@ -225,6 +226,7 @@ class Introspector:
                 extract.predicates = None
         else:
             extract.partitions = 0
+            extract.predicates = None
 
         # Regenerate BQ Schema if needed
         extract.bq_schema = self._bq_schema(table)
