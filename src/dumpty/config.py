@@ -1,6 +1,7 @@
 from dataclasses import dataclass
+from typing import Dict, List
+
 from dataclass_wizard import YAMLWizard
-from typing import List, Dict
 
 
 @dataclass
@@ -11,7 +12,7 @@ class SqlalchemyConfig:
     connect_args: dict = None
 
 
-@ dataclass
+@dataclass
 class SparkConfig:
     threads: int
     properties: Dict
@@ -22,7 +23,7 @@ class SparkConfig:
     log_level: str = 'WARN'  # ALL, DEBUG, ERROR, FATAL, INFO, OFF, TRACE, WARN
 
 
-@ dataclass
+@dataclass
 class JdbcConfig:
     url: str
     properties: Dict
@@ -47,3 +48,7 @@ class Config(YAMLWizard):
     max_job_queue: int = 32
     retry: bool = False
     job_threads: int = 4
+    tinydb_database_file: str = "tinydb.json"
+    reconcile: bool = False
+    # Require at least 1m rows to partition a table
+    partitioning_threshold: int = 1e6

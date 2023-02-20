@@ -1,10 +1,16 @@
-from google.cloud.bigquery import Dataset, DatasetReference, Table, TableReference, LoadJob, Client as BigqueryClient, SourceFormat, LoadJobConfig, CreateDisposition, WriteDisposition, SchemaField
-from google.cloud.exceptions import NotFound
-from google.cloud.storage import Blob, Bucket, Client as StorageClient
-from urllib.parse import urlparse
-import re
 import os
+import re
 from pathlib import PurePath
+from urllib.parse import urlparse
+
+from google.cloud.bigquery import Client as BigqueryClient
+from google.cloud.bigquery import (CreateDisposition, Dataset,
+                                   DatasetReference, LoadJobConfig,
+                                   SchemaField, SourceFormat, WriteDisposition)
+from google.cloud.exceptions import NotFound
+from google.cloud.storage import Blob, Bucket
+from google.cloud.storage import Client as StorageClient
+
 from dumpty import logger
 
 
