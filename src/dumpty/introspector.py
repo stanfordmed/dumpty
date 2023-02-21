@@ -88,15 +88,19 @@ class Introspector:
         logger.debug(
             f"Julienning {table.name} on {column.name} into {width}-row slices")
         with Session(self._engine) as session:
-            subquery = session.query(column.label('id'),
-                                     func.row_number().over(order_by=column).label('row_num')).subquery()
+            subquery = session\
+                .query(column.label('id'),
+                       func.row_number().over(order_by=column).label('row_num'))\
+                .subquery()
             # There doesn't appear to be a generic way to modulo in SQLAlchemy?
             if self._engine.dialect.name == "mssql":
                 modulo_filter = (subquery.c.row_num % width)
             else:
                 modulo_filter = (func.mod(subquery.c.row_num, width))
-            query = session.query(subquery.c.id).filter(
-                modulo_filter == 0)
+            query = session\
+                .query(subquery.c.id)\
+                .filter(modulo_filter == 0)\
+                .order_by(subquery.c.id)
             return [r[0] for r in query.all()]
 
     @staticmethod
