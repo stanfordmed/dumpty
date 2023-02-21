@@ -1,31 +1,28 @@
-import logging
 import argparse
 import json
 import logging
 import os
-import psutil
 import sys
-from math import ceil, floor
+from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from datetime import datetime
+from math import ceil
 from pathlib import Path
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from jinja2 import Environment, FileSystemLoader, Template
-from sqlalchemy import create_engine, engine_from_config
-from sqlalchemy.sql import sqltypes
+from typing import List
+
+import psutil
 from alive_progress import alive_bar
-from tenacity import Retrying, wait_random_exponential, stop_after_delay, stop_after_attempt
-from tinydb import JSONStorage, TinyDB, Query
-from tinydb.table import Document
-from dumpty import gcp
-from dumpty.config import Config
-from dumpty.spark import LocalSpark
-from dumpty.gcp import upload_from_string, bigquery_load, bigquery_create_dataset
-from dumpty.sql import Sql, factory
-from dumpty.util import normalize_str, filter_shuffle
-from tinydb_serialization.serializers import DateTimeSerializer
-from tinydb_serialization import SerializationMiddleware
-from tinydb.middlewares import CachingMiddleware
+from jinja2 import Environment, FileSystemLoader, Template
+from sqlalchemy import create_engine
+from tenacity import (Retrying, stop_after_attempt, stop_after_delay,
+                      wait_random_exponential)
+
 from dumpty import logger
+from dumpty.config import Config
+from dumpty.gcp import (bigquery_create_dataset, bigquery_load,
+                        upload_from_string, get_size_bytes)
+from dumpty.introspector import Extract, Introspector
+from dumpty.spark import LocalSpark
+from dumpty.util import filter_shuffle, normalize_str
 
 
 def config_from_args(argv) -> Config:
@@ -113,150 +110,60 @@ def config_from_args(argv) -> Config:
     return config
 
 
-def introspect(table: Document, sql: Sql):
-    table_name = table['name']
-    start_time = datetime.now()
-    logger.debug(f"Introspecting {sql.schema}.{table_name}")
-
-    # Get primary key info, min, max, row count
-    rows = 0
-    pk = sql.get_pk(table_name)
-    if pk is not None:
-        table['pk'] = pk.name
-        (min, max, rows) = sql.get_min_max_count(table_name, pk.name)
-        table['min'] = min
-        table['max'] = max
-        table['rows'] = rows
-        is_numeric = isinstance(pk.type, sqltypes.Numeric)
-
-    if pk is not None and rows > 1e6:  # don't bother splitting any tables smaller than 1m rows
-        partitions = table.get('partitions')
-
-        if not partitions:
-            # Default to ~1M rows per partition, but at least two partitions
-            partitions = ceil(rows / 1e6)
-
-        if table.get('partitions_rec'):
-            partitions = table.get('partitions_rec')
-
-        if partitions > 1:
-            slice_width = floor(rows / partitions)
-            if is_numeric:
-                # Numeric, sequential PK with no gaps (starting with an offset is ok)
-                # will use default Spark column partitioning
-                if (rows == max) or (rows == max - 1) or (abs(rows - (max - min)) <= 1):
-                    table['partition_column'] = pk.name
-                else:
-                    # Numeric, PK is not sequential and likely heavily skewed
-                    intervals = sql.julienne(table_name, pk.name, slice_width)
-                    i: int = 0
-                    slices = []
-                    while i <= len(intervals):
-                        if i == 0:
-                            slices.append(
-                                f"{pk.name} <= {intervals[i]} OR {pk.name} IS NULL ")
-                        elif i == len(intervals):
-                            slices.append(f"{pk.name} > {intervals[i-1]}")
-                        else:
-                            slices.append(
-                                f"{pk.name} > {intervals[i-1]} AND {pk.name} <= {intervals[i]}")
-                        i += 1
-                    table['predicates'] = slices
-            else:
-                # Row-number based splitting on a non-numeric field
-                intervals = sql.julienne(table_name, pk.name, slice_width)
-                i: int = 0
-                slices = []
-                while i <= len(intervals):
-                    if i == 0:
-                        slices.append(
-                            f"{pk.name} <= '{intervals[i]}' OR {pk.name} IS NULL ")
-                    elif i == len(intervals):
-                        slices.append(f"{pk.name} > '{intervals[i-1]}'")
-                    else:
-                        slices.append(
-                            f"{pk.name} > '{intervals[i-1]}' AND {pk.name} <= '{intervals[i]}'")
-                    i += 1
-                table['predicates'] = slices
-        else:
-            # Recommendation from last run was to not split this table, remove old entries
-            table['partition_column'] = None
-            table['predicates'] = None
-    else:
-        partitions = 1
-
-    table['partitions'] = partitions
-
-    complete_time = datetime.now()
-    duration = complete_time - start_time
-    table['introspected'] = complete_time
-    table['introspection_s'] = duration.total_seconds()
-
-
-def extract_and_load(table: Document, config: Config, spark: LocalSpark, sql: Sql, retryer: Retrying) -> Document:
-    table_name = table['name']
-
-    introspected = table.get('introspected')
-    expired = introspected and config.introspection_expire_s > 0 and (
-        (datetime.now() - introspected).total_seconds() >= config.introspection_expire_s)
-    if not introspected or expired:
-        retryer(introspect, table, sql)
-    else:
-        # Check if there is a recommended partition size from a previous run, if so re-calculate partitioning
-        rec = table.get('partitions_rec')
-        if rec and rec != table['partitions']:
-            retryer(introspect, table, sql)
-        else:
-            # Just get a fresh row count
-            table['rows'] = sql.get_row_count(table_name)
+def extract_and_load(table_name: str, config: Config, spark: LocalSpark, introspector: Introspector, retryer: Retrying):
+    # Introspect if needed
+    extract = retryer(introspector.introspect, table_name,
+                      config.partitioning_threshold)
 
     # Extract the table with Spark
+    extract.extract_uri = None
     if config.target_uri is not None:
-        extract_uri = retryer(spark.full_extract, table, config.target_uri)
-        table['extract_uri'] = extract_uri
+        extract_uri = retryer(spark.full_extract, extract, config.target_uri)
+        extract.extract_uri = extract_uri
+        extract.extract_date = datetime.now()
 
         # Suggest a recommended partition size based on the actual extract size (for next run)
-        if "gs://" in extract_uri:  # only GCS for now
-            storage_bytes = gcp.get_size_bytes(extract_uri)
-            rec = ceil(storage_bytes / config.target_partition_size_bytes)
-            if rec != table.get('partitions', 1):
-                logger.debug(
-                    f"Recommending {rec} partitions for {table_name} for next run")
-            table['partitions_rec'] = rec
-            table['storage_bytes'] = storage_bytes
+        if extract.partitions > 0 and "gs://" in extract_uri:  # only resizes based on GCS targets, for now
+            extract.gcs_bytes = get_size_bytes(extract_uri)
+            recommendation = ceil(
+                extract.gcs_bytes / config.target_partition_size_bytes)
+            if recommendation != extract.partitions:
+                logger.info(
+                    f"Adjusted partitions on {extract.name} from {extract.partitions} to {recommendation} for next run")
+                extract.partitions = recommendation
+                extract.introspect_date = None  # triggers new introspection next run
 
         # Get JSON-formatted table schema
-        schema = sql.get_schema(table_name)
-        json_schema = json.dumps(schema, indent=4)
+        json_schema = json.dumps(extract.bq_schema, indent=4)
         if "gs://" not in config.target_uri:
-            with open(f"{config.target_uri}/{normalize_str(table_name)}/schema.json", "wt") as f:
+            with open(f"{config.target_uri}/{normalize_str(extract.name)}/schema.json", "wt") as f:
                 f.write(json_schema)
         else:
             retryer(upload_from_string, json_schema,
-                    f"{config.target_uri}/{normalize_str(table_name)}/schema.json")
+                    f"{config.target_uri}/{normalize_str(extract.name)}/schema.json")
 
         # Load into BigQuery
         if config.target_dataset is not None:
             # Load from GCS into BQ
+            normalized_table_name = normalize_str(extract.name)
             bq_rows: int = 0
             bq_bytes: int = 0
             if config.target_dataset is not None:
-                bq_rows, bq_bytes = retryer(bigquery_load, extract_uri, f"{config.target_dataset}.{table_name}",
-                                            config.spark.format, schema, "Loaded by dumpty")
-            table['rows_loaded'] = bq_rows
-            table['bytes_loaded'] = bq_bytes
+                bq_rows, bq_bytes = retryer(bigquery_load, extract_uri, f"{config.target_dataset}.{normalized_table_name}",
+                                            config.spark.format, extract.bq_schema, "Loaded by Dumpty")
+            extract.rows_loaded = bq_rows
+            extract.bq_bytes = bq_bytes
 
-    return table
+    return extract
 
 
 def main(args=None):
 
-    config = config_from_args(args)
+    config: Config = config_from_args(args)
 
     # Initialize SqlAlchemy
     engine = create_engine(config.sqlalchemy.url, pool_size=config.sqlalchemy.pool_size, connect_args=config.sqlalchemy.connect_args,
                            max_overflow=config.sqlalchemy.max_overflow, pool_pre_ping=True)
-    sql = factory(config.schema, engine)
 
     # Default retry for network operations: 2^x * 1 second between each retry, starting with 5s, up to 60s, die after 5 minutes of retries
     # reraise=True places the exception at the END of the stack-trace dump
@@ -274,64 +181,52 @@ def main(args=None):
         if not os.path.exists(spark_log_dir):
             os.makedirs(spark_log_dir)
 
-    # summary = ExtractSummary(tables=[], warnings=[])
     summary = {
         "start_date": datetime.now(),
         "tables": [],
         "warnings": []
     }
 
-    # TinyDB doesn't support DateTime out of the box so we add it here
-    serialization = SerializationMiddleware(JSONStorage)
-    serialization.register_serializer(DateTimeSerializer(), 'TinyDate')
+    extract_jobs: List[Future] = []
+    completed: List[Extract] = []
+    with Introspector(config.tinydb_database_file, engine, config.schema) as introspector:
 
-    extract_jobs = []
-    with TinyDB('tables.json', sort_keys=True, indent=4,
-                storage=CachingMiddleware(serialization)) as db:
-        db.default_table_name = config.schema
-
-        # Check if new tables have been added to config.tables since last run
-        tiny_db = db.all()
-        new_tables = [t for t in config.tables if t not in [
-            d['name'] for d in tiny_db]]
-        if len(new_tables) > 0:
-            # Make sure these tables _actually_ exist in the SQL database before going any further
-            sql_tables = sql.get_tables()
-            not_found = [t for t in new_tables if t not in sql_tables]
-            if len(not_found) > 0:
-                logger.error(
-                    f"Tables listed in config schema were not found in SQL schema {config.schema}: {','.join(not_found)}")
-                exit(1)
-            db.insert_multiple([{"name": t} for t in new_tables])
+        if config.reconcile:
+            # Check if tables being requested actually exist in SQL database before doing anything else
+            # This can be very slow for databases with thousands of tables so it is off by default
+            introspector.reconcile(config.tables)
 
         with LocalSpark(config, config.target_uri) as spark:
+
             # Throttles the number of jobs submitted to Spark (and # concurrent pysql DB connections)
             with ThreadPoolExecutor(max_workers=config.job_threads) as executor:
+
                 for table in config.tables:
-                    extract_jobs.append(executor.submit(extract_and_load, db.search(Query().name == table)[0], config,
-                                                        spark, sql, retryer))
+                    extract_jobs.append(executor.submit(
+                        extract_and_load, table, config, spark, introspector, retryer))
+
                 with alive_bar(len(extract_jobs), dual_line=True, stats=False, disable=not config.progress_bar) as bar:
                     for future in as_completed(extract_jobs):
                         try:
-                            extracted_table: Document = future.result()
-                            db.update(extracted_table, Query().name ==
-                                      extracted_table['name'])
-                            logger.debug(f"{extracted_table['name']} complete")
+                            extracted_table: Extract = future.result()
+                            introspector.save(extracted_table)
+                            completed.append(extracted_table)
+                            logger.debug(f"{extracted_table.name} complete")
                         except Exception as ex:
                             logger.error(ex)
                             executor.shutdown(
                                 wait=False, cancel_futures=True)
                             raise ex
-                        summary['tables'].append(extracted_table)
+                        summary['tables'].append(extracted_table.name)
                         if config.target_dataset is not None:
-                            consistent = extracted_table['rows'] == extracted_table['rows_loaded']
-                            if not consistent:
-                                warning = f"{extracted_table['name']}: row count mismatch (expected: {extracted_table['rows']}, loaded: {extracted_table['rows_loaded']}+"
+                            if not extracted_table.consistent():
+                                warning = f"{extracted_table.name}: row count mismatch (expected: {extracted_table.rows}, loaded: {extracted_table.rows_loaded}+"
                                 logger.warning(warning)
                                 summary.warnings.append(warning)
                         bar.text = f"| {datetime.now().strftime('%H:%M:%S')} | System CPU: {psutil.cpu_percent()}% | Memory: {psutil.virtual_memory()[2]}%"
                         bar()
-                logger.debug("Extraction complete, shutting down")
+
+                logger.info("Extraction complete, shutting down")
 
     # Summarize
     summary['end_date'] = datetime.now()
@@ -339,18 +234,14 @@ def main(args=None):
         (summary['end_date'] - summary['start_date']).total_seconds())
 
     if config.target_dataset is not None:
-        summary['consistent'] = all(x['rows'] == x['rows_loaded']
-                                    for x in summary['tables'])
-        summary['total_bytes'] = sum(x['bytes_loaded']
-                                     for x in summary['tables'])
-        summary['mb_per_second'] = round(
-            (summary['total_bytes'] / summary['elapsed_s']) / pow(10, 6), 2)
+        summary['consistent'] = all(x.consistent() for x in completed)
+        summary['bq_bytes'] = sum(x.bq_bytes for x in completed)
+
+    if config.target_uri is not None:
+        summary['gcs_bytes'] = sum(x.gcs_bytes for x in completed)
 
     with open(config.log_file, "w") as outfile:
         outfile.write(json.dumps(summary, indent=4, default=str))
-
-    logger.info(
-        f"Extract summary saved to {config.log_file}")
 
     if not len(summary['warnings']) == 0:
         logger.warning(

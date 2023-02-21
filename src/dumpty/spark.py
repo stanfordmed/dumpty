@@ -1,86 +1,90 @@
-from pyspark.sql import SparkSession
 from pyspark import SparkConf
-from dumpty.config import Config
-from dumpty.util import normalize_df, normalize_str
-from tinydb.table import Document
+from pyspark.sql import SparkSession, DataFrame
+from pyspark.sql.functions import col
+
 from dumpty import logger
+from dumpty.config import Config
+from dumpty.introspector import Extract
+from dumpty.util import normalize_str
 
 
 class LocalSpark:
+    """Class for extracting tables using Spark
+    """
 
     def __init__(self, config: Config, output_uri: str):
-        self.config = config.spark
-        self.jdbc = config.jdbc
-        self.output_uri = output_uri
-        self.context: SparkSession = None
+        self._spark_config = config.spark
+        self._jdbc_config = config.jdbc
+        self._output_uri = output_uri
+        self._spark_session: SparkSession = None
 
     def __enter__(self):
         ctx = SparkSession\
             .builder\
-            .master(f'local[{self.config.threads}]')\
+            .master(f'local[{self._spark_config.threads}]')\
             .appName('Dumpty')\
-            .config(conf=SparkConf().setAll(list(self.config.properties.items())))
-        self.context = ctx.getOrCreate()
-        self.context.sparkContext.setLogLevel(self.config.log_level)
+            .config(conf=SparkConf().setAll(list(self._spark_config.properties.items())))
+        self._spark_session = ctx.getOrCreate()
+        self._spark_session.sparkContext.setLogLevel(
+            self._spark_config.log_level)
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        self.context.stop()
+        self._spark_session.stop()
 
-    def full_extract(self, table: Document, uri: str) -> str:
-        spark = self.context
-        table_name = table['name']
-        partitions = table.get('partitions')
-        predicates = table.get('predicates')
-        partition_column = table.get('partition_column')
-        min = table.get('min')
-        max = table.get('max')
+    @staticmethod
+    def normalize_df(df: DataFrame) -> DataFrame:
+        return df.select([col(x).alias(normalize_str(x)) for x in df.columns])
+
+    def full_extract(self, extract: Extract, uri: str) -> str:
+        session = self._spark_session
         # spark.sparkContext.setJobGroup(table.name, "full extract")
-        if predicates is not None:
-            spark.sparkContext.setJobDescription(
-                f'{table_name} ({len(predicates)} predicates)')
-            df = spark.read.jdbc(
-                self.jdbc.url,
-                table=table_name,
-                predicates=predicates,
-                properties=self.jdbc.properties
+        if extract.predicates is not None and len(extract.predicates) > 0:
+            session.sparkContext.setJobDescription(
+                f'{extract.name} ({len(extract.predicates)} predicates)')
+            df = session.read.jdbc(
+                self._jdbc_config.url,
+                table=extract.name,
+                predicates=extract.predicates,
+                properties=self._jdbc_config.properties
             )
-        elif partition_column is not None and min is not None and max is not None:
-            spark.sparkContext.setJobDescription(
-                f'{table_name} (partitioned on [{partition_column}] from {min} to {max})')
-            df = spark.read.jdbc(
-                url=self.jdbc.url,
-                table=table_name,
-                column=partition_column,
-                lowerBound=str(min),
-                upperBound=str(max),
-                numPartitions=partitions,
-                properties=self.jdbc.properties
+        elif extract.partition_column is not None and extract.min is not None and extract.max is not None:
+            session.sparkContext.setJobDescription(
+                f'{extract.name} (partitioned on [{extract.partition_column}] from {extract.min} to {extract.max})')
+            df = session.read.jdbc(
+                url=self._jdbc_config.url,
+                table=extract.name,
+                column=extract.partition_column,
+                lowerBound=str(extract.min),
+                upperBound=str(extract.max),
+                numPartitions=extract.partitions,
+                properties=self._jdbc_config.properties
             )
         else:
             # Simple table dump
-            spark.sparkContext.setJobDescription(
-                f'{table_name}')
-            df = spark.read.jdbc(
-                url=self.jdbc.url,
-                table=table_name,
-                properties=self.jdbc.properties
+            session.sparkContext.setJobDescription(
+                f'{extract.name}')
+            df = session.read.jdbc(
+                url=self._jdbc_config.url,
+                table=extract.name,
+                properties=self._jdbc_config.properties
             )
 
         # Always normalize table name
-        n_table_name = normalize_str(table_name)
-        if self.config.normalize_schema:
+        n_table_name = normalize_str(extract.name)
+        if self._spark_config.normalize_schema:
             # Normalize column names?
-            df = normalize_df(df)
+            df = self.normalize_df(df)
 
         # Attempted different methods of attaching listeners to get row count, none were reliable
 
-        spark.sparkContext.setLocalProperty("callSite.short", n_table_name)
+        session.sparkContext.setLocalProperty("callSite.short", n_table_name)
 
-        df.write.save(f"{uri}/{n_table_name}", format=self.config.format, mode="overwrite",
-                      timestampFormat=self.config.timestamp_format, compression=self.config.compression)
+        logger.debug(f"Extracting {extract.name} as {n_table_name}")
+        df.write.save(f"{uri}/{n_table_name}", format=self._spark_config.format, mode="overwrite",
+                      timestampFormat=self._spark_config.timestamp_format, compression=self._spark_config.compression)
 
-        final_uri = f"{uri}/{n_table_name}/part-*.{self.config.format.lower()}" + \
-            (".gz" if self.config.compression == "gzip" else "")
+        final_uri = f"{uri}/{n_table_name}/part-*.{self._spark_config.format.lower()}" + \
+            (".gz" if self._spark_config.compression == "gzip" else "")
 
         return final_uri
