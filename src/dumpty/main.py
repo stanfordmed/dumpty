@@ -149,6 +149,8 @@ def extract_and_load(table_name: str, config: Config, spark: LocalSpark, introsp
             bq_rows: int = 0
             bq_bytes: int = 0
             if config.target_dataset is not None:
+                logger.info(
+                    f"Loading {extract.name} into BigQuery as {normalized_table_name} from {extract.extract_uri}")
                 bq_rows, bq_bytes = retryer(bigquery_load, extract_uri, f"{config.target_dataset}.{normalized_table_name}",
                                             config.spark.format, extract.bq_schema, "Loaded by Dumpty")
             extract.rows_loaded = bq_rows
