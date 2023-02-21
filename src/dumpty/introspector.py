@@ -167,8 +167,9 @@ class Introspector:
                     extract.min = int(res.min)
                     extract.rows = int(res.count)
                 else:
-                    qry = session.query(func.count().label("count"))
-                    extract.rows = int(qry.scalar()).select_from(table)
+                    qry = session.query(func.count().label(
+                        "count")).select_from(table)
+                    extract.rows = int(qry.scalar())
             else:
                 # If no PK we'll just dump the entire table in a single thread
                 qry = session.query(func.count().label(

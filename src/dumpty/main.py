@@ -16,10 +16,10 @@ from sqlalchemy import create_engine
 from tenacity import (Retrying, stop_after_attempt, stop_after_delay,
                       wait_random_exponential)
 
-from dumpty import gcp, logger
+from dumpty import logger
 from dumpty.config import Config
 from dumpty.gcp import (bigquery_create_dataset, bigquery_load,
-                        upload_from_string)
+                        upload_from_string, get_size_bytes)
 from dumpty.introspector import Extract, Introspector
 from dumpty.spark import LocalSpark
 from dumpty.util import filter_shuffle, normalize_str
@@ -120,10 +120,11 @@ def extract_and_load(table_name: str, config: Config, spark: LocalSpark, introsp
     if config.target_uri is not None:
         extract_uri = retryer(spark.full_extract, extract, config.target_uri)
         extract.extract_uri = extract_uri
+        extract.extract_date = datetime.now()
 
         # Suggest a recommended partition size based on the actual extract size (for next run)
         if extract.partitions > 0 and "gs://" in extract_uri:  # only resizes based on GCS targets, for now
-            extract.gcs_bytes = gcp.get_size_bytes(extract_uri)
+            extract.gcs_bytes = get_size_bytes(extract_uri)
             recommendation = ceil(
                 extract.gcs_bytes / config.target_partition_size_bytes)
             if recommendation != extract.partitions:
