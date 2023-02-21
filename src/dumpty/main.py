@@ -224,7 +224,7 @@ def main(args=None):
                             if not extracted_table.consistent():
                                 warning = f"{extracted_table.name}: row count mismatch (expected: {extracted_table.rows}, loaded: {extracted_table.rows_loaded}+"
                                 logger.warning(warning)
-                                summary.warnings.append(warning)
+                                summary['warnings'].append(warning)
                         bar.text = f"| {datetime.now().strftime('%H:%M:%S')} | System CPU: {psutil.cpu_percent()}% | Memory: {psutil.virtual_memory()[2]}%"
                         bar()
 
