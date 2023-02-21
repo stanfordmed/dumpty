@@ -10,10 +10,10 @@
             "justMyCode": true
         },
         {
-            "name": "Test yaml",
+            "name": "Test",
             "type": "python",
             "request": "launch",
-            "program": "${file}",
+            "module": "dumpty.main",
             "console": "integratedTerminal",
             "args": [
                 "--config",
