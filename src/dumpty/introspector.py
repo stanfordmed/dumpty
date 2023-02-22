@@ -167,6 +167,7 @@ class Introspector:
                                         func.min(pk).label("min"),
                                         func.count().label("count")).select_from(table)
                     res = qry.one()
+                    # TODO: Fixme -- should not be cast to int... should support Decimal!
                     extract.max = int(
                         res.max) if res.max is not None else None
                     extract.min = int(
