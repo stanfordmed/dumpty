@@ -167,8 +167,10 @@ class Introspector:
                                         func.min(pk).label("min"),
                                         func.count().label("count")).select_from(table)
                     res = qry.one()
-                    extract.max = int(res.max)
-                    extract.min = int(res.min)
+                    extract.max = int(
+                        res.max) if res.max is not None else None
+                    extract.min = int(
+                        res.min) if res.min is not None else None
                     extract.rows = int(res.count)
                 else:
                     qry = session.query(func.count().label(

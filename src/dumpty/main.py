@@ -165,7 +165,7 @@ def main(args=None):
 
     # Initialize SqlAlchemy
     engine = create_engine(config.sqlalchemy.url, pool_size=config.sqlalchemy.pool_size, connect_args=config.sqlalchemy.connect_args,
-                           max_overflow=config.sqlalchemy.max_overflow, pool_pre_ping=True)
+                           max_overflow=config.sqlalchemy.max_overflow, pool_pre_ping=True, echo=False)
 
     # Default retry for network operations: 2^x * 1 second between each retry, starting with 5s, up to 60s, die after 5 minutes of retries
     # reraise=True places the exception at the END of the stack-trace dump
