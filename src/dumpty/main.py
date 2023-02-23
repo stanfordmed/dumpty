@@ -93,7 +93,9 @@ def config_from_args(argv) -> Config:
     if args.credentials is not None:
         config.credentials = args.credentials
     if args.verbose is not None:
-        logger.setLevel(logging.DEBUG)
+        logger.setLevel(logging.INFO)
+    else:
+        logger.setLevel(logging.WARNING)
 
     if config.target_dataset is not None and "." not in config.target_dataset:
         parser.error("Dataset must be in format project.dataset")
@@ -213,7 +215,7 @@ def main(args=None):
                             extracted_table: Extract = future.result()
                             introspector.save(extracted_table)
                             completed.append(extracted_table)
-                            logger.debug(f"{extracted_table.name} complete")
+                            logger.info(f"{extracted_table.name} complete")
                         except Exception as ex:
                             logger.error(ex)
                             executor.shutdown(

@@ -17,6 +17,7 @@ from tinydb_serialization.serializers import DateTimeSerializer
 from dumpty import logger
 from dumpty.exceptions import ValidationException
 from dumpty.util import normalize_str
+from dumpty.serializers import DecimalSerializer, FloatSerializer
 
 lock = Lock()
 
@@ -65,6 +66,8 @@ class Introspector:
         """
         serialization = SerializationMiddleware(JSONStorage)
         serialization.register_serializer(DateTimeSerializer(), 'TinyDate')
+        serialization.register_serializer(DecimalSerializer(), 'TinyDecimal')
+        serialization.register_serializer(FloatSerializer(), 'TinyFloat')
         self._schema = schema
         self._engine = engine
         self._metadata = MetaData(bind=engine, schema=schema)
@@ -85,7 +88,7 @@ class Introspector:
         self._tables = {}
 
     def _julienne(self, table: Table, column: Column, width: int):
-        logger.debug(
+        logger.info(
             f"Julienning {table.name} on {column.name} into {width}-row slices")
         with Session(self._engine) as session:
             subquery = session\
@@ -167,21 +170,18 @@ class Introspector:
                                         func.min(pk).label("min"),
                                         func.count().label("count")).select_from(table)
                     res = qry.one()
-                    # TODO: Fixme -- should not be cast to int... should support Decimal!
-                    extract.max = int(
-                        res.max) if res.max is not None else None
-                    extract.min = int(
-                        res.min) if res.min is not None else None
-                    extract.rows = int(res.count)
+                    extract.max = res.max
+                    extract.min = res.min
+                    extract.rows = res.count
                 else:
                     qry = session.query(func.count().label(
                         "count")).select_from(table)
-                    extract.rows = int(qry.scalar())
+                    extract.rows = qry.scalar()
             else:
                 # If no PK we'll just dump the entire table in a single thread
                 qry = session.query(func.count().label(
                     "count")).select_from(table)
-                extract.rows = int(qry.scalar())
+                extract.rows = qry.scalar()
 
         # Only partition tables with a PK and rows exceeding partition_row_min
         if extract.rows >= partitioning_threshold and pk is not None:
