@@ -163,6 +163,9 @@ def main(args=None):
                 while count < len(config.tables):
                     try:
                         extract = pipeline.done_queue.get(timeout=1)
+                        if isinstance(extract, (Exception)):
+                            logger.error(extract)
+                            raise (extract)
                         extract_db.save(extract)
                         count += 1
                         bar()

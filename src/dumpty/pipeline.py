@@ -100,11 +100,15 @@ class Pipeline:
                 .order_by(subquery.c.id)
             return [r[0] for r in query.all()]
 
-    def _introspect(self, extract: Extract):
+    def introspect(self, extract: Extract):
         logger.info(
             f"Introspecting {self.config.schema + '.' if self.config.schema is not None else ''}{extract.name}")
         # Introspect table from SQL database
         table = Table(extract.name, self._metadata, autoload=True)
+
+        ##
+        # TODO: only find min/max, julienne, if the introspection has "expired"
+        ##
 
         # Find min/max of PK (if it exists) and total row count
         pk = table.primary_key.columns[0] if table.primary_key else None
@@ -186,20 +190,6 @@ class Pipeline:
         extract.bq_schema = bq_schema(table)
         extract.introspect_date = datetime.now()
 
-        return extract
-
-    def introspect(self, extract: Extract) -> Extract:
-        """Introspects (if needed) a table returning an Extract instance
-           :param table_name: name of table to extract
-           :param expire_seconds: will trigger re-introspection if expired
-           :param partitioning_threshold: do not partition tables with less than this many rows (default: ``1,000,000``
-        """
-        if extract.introspect_date is not None:
-            duration = extract.introspect_date - datetime.now()
-            if duration.total_seconds() > self._expire_seconds:
-                self._introspect(extract)
-        else:
-            self._introspect(extract)
         return extract
 
     def _extract(self, extract: Extract, uri: str) -> str:
