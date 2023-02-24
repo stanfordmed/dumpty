@@ -7,7 +7,7 @@ from dataclass_wizard import YAMLWizard
 @dataclass
 class SqlalchemyConfig:
     url: str
-    pool_size: 20
+    pool_size: 32
     max_overflow: int = -1
     connect_args: dict = None
 
@@ -18,7 +18,6 @@ class SparkConfig:
     properties: Dict
     format: str = "json"
     compression: str = "gzip"
-    normalize_schema: bool = True
     timestamp_format: str = "yyyy-MM-dd HH:mm:ss"
     log_level: str = 'WARN'  # ALL, DEBUG, ERROR, FATAL, INFO, OFF, TRACE, WARN
 
@@ -45,10 +44,13 @@ class Config(YAMLWizard):
     log_file: str = 'extract.json'
     project: str = None
     credentials: str = None
-    max_job_queue: int = 32
     retry: bool = False
-    job_threads: int = 4
     tinydb_database_file: str = "tinydb.json"
     reconcile: bool = False
+    normalize_schema: bool = True
     # Require at least 1m rows to partition a table
     partitioning_threshold: int = 1e6
+
+    introspect_threads: int = 32
+    extract_threads: int = 32
+    load_threads: int = 64
