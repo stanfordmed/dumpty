@@ -191,6 +191,9 @@ class Pipeline:
         return extract
 
     def _extract(self, extract: Extract, uri: str) -> str:
+        # Always normalize table name
+        n_table_name = normalize_str(extract.name)
+
         session = self._spark_session
         # spark.sparkContext.setJobGroup(table.name, "full extract")
         if extract.predicates is not None and len(extract.predicates) > 0:
@@ -231,8 +234,6 @@ class Pipeline:
             logger.info(
                 f"Extracting {extract.name} (single thread)")
 
-        # Always normalize table name
-        n_table_name = normalize_str(extract.name)
         if self.config.normalize_schema:
             # Normalize column names?
             df = self.normalize_df(df)
