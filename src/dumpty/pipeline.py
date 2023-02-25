@@ -1,11 +1,12 @@
 import json
-from dataclasses import dataclass, field
 from datetime import datetime
 from math import ceil, floor
 from queue import Queue
-from threading import Lock, Thread
-from typing import Callable, List
+from typing import List
 
+from pyspark import SparkConf
+from pyspark.sql import DataFrame, SparkSession
+from pyspark.sql.functions import col
 from sqlalchemy import Column, MetaData, Table, func, inspect
 from sqlalchemy.engine import Engine, Inspector
 from sqlalchemy.orm import Session
@@ -16,19 +17,11 @@ from tenacity import Retrying
 from dumpty import logger
 from dumpty.config import Config
 from dumpty.exceptions import ValidationException
-from dumpty.gcp import bigquery_load, get_size_bytes, upload_from_string
+from dumpty.extract import Extract
+from dumpty.gcp import bigquery_create_table, bigquery_load, get_size_bytes
 from dumpty.sql import bq_schema
 from dumpty.util import normalize_str
-from dumpty.worker import Worker
-from dumpty.extract import Extract
-
-from pyspark import SparkConf
-from pyspark.sql import SparkSession, DataFrame
-from pyspark.sql.functions import col
-
-from dumpty import logger
-from dumpty.config import Config
-from dumpty.util import normalize_str
+from dumpty.worker import WorkerPool
 
 
 class Pipeline:
@@ -48,17 +41,19 @@ class Pipeline:
         self._metadata = MetaData(bind=engine, schema=config.schema)
         self._inspector: Inspector = inspect(engine)
 
-        self.introspect_queue = Queue(config.introspect_threads)
-        self.extract_queue = Queue(config.extract_threads)
-        self.load_queue = Queue(config.load_threads)
+        self.introspect_queue = Queue(config.introspect_queue_size)
+        self.extract_queue = Queue(config.extract_queue_size)
+        self.load_queue = Queue(config.load_queue_size)
         self.done_queue = Queue()
 
-        for _ in range(self.introspect_queue.maxsize):
-            Worker(self.introspect, self.introspect_queue, self.extract_queue)
-        for _ in range(self.extract_queue.maxsize):
-            Worker(self.extract, self.extract_queue, self.load_queue)
-        for _ in range(self.load_queue.maxsize):
-            Worker(self.load, self.load_queue, self.done_queue)
+        self.introspect_workers = WorkerPool(
+            self.introspect, self.introspect_queue, self.extract_queue, self.introspect_queue.maxsize)
+
+        self.extract_workers = WorkerPool(
+            self.extract, self.extract_queue, self.load_queue,  self.extract_queue.maxsize)
+
+        self.load_workers = WorkerPool(
+            self.load, self.load_queue, self.done_queue, self.load_queue.maxsize)
 
     def __enter__(self):
         ctx = SparkSession\
@@ -74,12 +69,15 @@ class Pipeline:
     def __exit__(self, exc_type, exc_val, exc_tb):
         self._spark_session.stop()
 
-    def submit(self, extract: Extract):
-        self.introspect_queue.put(extract)
-
     @staticmethod
     def normalize_df(df: DataFrame) -> DataFrame:
         return df.select([col(x).alias(normalize_str(x)) for x in df.columns])
+
+    def shutdown(self):
+        self._spark_session.stop()
+
+    def status(self) -> str:
+        return f"Introspecting: {self.introspect_workers.busy_count()} | Extracting {self.extract_workers.busy_count()} | Loading {self.load_workers.busy_count()}"
 
     def _julienne(self, table: Table, column: Column, width: int):
         logger.info(
@@ -204,6 +202,9 @@ class Pipeline:
                 predicates=extract.predicates,
                 properties=self.config.jdbc.properties
             )
+            logger.info(
+                f"Extracting {extract.name} as {n_table_name} ({len(extract.predicates)} predicates)")
+
         elif extract.partition_column is not None and extract.min is not None and extract.max is not None:
             session.sparkContext.setJobDescription(
                 f'{extract.name} (partitioned on [{extract.partition_column}] from {extract.min} to {extract.max})')
@@ -216,6 +217,8 @@ class Pipeline:
                 numPartitions=extract.partitions,
                 properties=self.config.jdbc.properties
             )
+            logger.info(
+                f"Extracting {extract.name} as {n_table_name} (partitioning on {extract.partition_column})")
         else:
             # Simple table dump
             session.sparkContext.setJobDescription(
@@ -225,6 +228,8 @@ class Pipeline:
                 table=extract.name,
                 properties=self.config.jdbc.properties
             )
+            logger.info(
+                f"Extracting {extract.name} (single thread)")
 
         # Always normalize table name
         n_table_name = normalize_str(extract.name)
@@ -232,11 +237,7 @@ class Pipeline:
             # Normalize column names?
             df = self.normalize_df(df)
 
-        # Attempted different methods of attaching listeners to get row count, none were reliable
-
         session.sparkContext.setLocalProperty("callSite.short", n_table_name)
-
-        logger.debug(f"Extracting {extract.name} as {n_table_name}")
         df.write.save(f"{uri}/{n_table_name}", format=self.config.spark.format, mode="overwrite",
                       timestampFormat=self.config.spark.timestamp_format, compression=self.config.spark.compression)
 
@@ -248,9 +249,12 @@ class Pipeline:
     def extract(self, extract: Extract) -> Extract:
         # Extract the table with Spark
         extract.extract_uri = None
+
+        if extract.rows == 0:
+            # Nothing to do here
+            return extract
+
         if self.config.target_uri is not None:
-            logger.info(
-                f"Extracting {extract.name} ({extract.partitions} partitions)")
             extract_uri = self._extract(extract, self.config.target_uri)
             extract.extract_uri = extract_uri
             extract.extract_date = datetime.now()
@@ -266,33 +270,41 @@ class Pipeline:
                     extract.partitions = recommendation
                     extract.introspect_date = None  # triggers new introspection next run
 
-            # Write table schema
-            json_schema = json.dumps(extract.bq_schema, indent=4)
-            if "gs://" not in self.config.target_uri:
-                with open(f"{self.config.target_uri}/{normalize_str(extract.name)}/schema.json", "wt") as f:
-                    f.write(json_schema)
-            else:
-                self.retryer(upload_from_string, json_schema,
-                             f"{self.config.target_uri}/{normalize_str(extract.name)}/schema.json")
-
         return extract
 
     def load(self, extract: Extract) -> Extract:
 
+        normalized_table_name = normalize_str(extract.name)
+
         # Load into BigQuery
         if self.config.target_dataset is not None:
-            # Load from GCS into BQ
-            normalized_table_name = normalize_str(extract.name)
-            bq_rows: int = 0
-            bq_bytes: int = 0
-            if self.config.target_dataset is not None:
-                logger.info(
-                    f"Loading {extract.name} into BigQuery as {normalized_table_name} from {extract.extract_uri}")
-                bq_rows, bq_bytes = self.retryer(bigquery_load, extract.extract_uri, f"{self.config.target_dataset}.{normalized_table_name}",
-                                                 self.config.spark.format, extract.bq_schema, "Loaded by Dumpty")
-            extract.rows_loaded = bq_rows
-            extract.bq_bytes = bq_bytes
+            if extract.rows > 0:
 
+                # # Write table schema
+                # json_schema = json.dumps(extract.bq_schema, indent=4)
+                # if "gs://" not in self.config.target_uri:
+                #     with open(f"{self.config.target_uri}/{normalize_str(extract.name)}/schema.json", "wt") as f:
+                #         f.write(json_schema)
+                # else:
+                #     self.retryer(upload_from_string, json_schema,
+                #                  f"{self.config.target_uri}/{normalize_str(extract.name)}/schema.json")
+
+                # Load from GCS into BQ
+                bq_rows: int = 0
+                bq_bytes: int = 0
+                if self.config.target_dataset is not None:
+                    logger.info(
+                        f"Loading {extract.name} into BigQuery as {normalized_table_name} from {extract.extract_uri}")
+                    bq_rows, bq_bytes = self.retryer(bigquery_load, extract.extract_uri, f"{self.config.target_dataset}.{normalized_table_name}",
+                                                     self.config.spark.format, extract.bq_schema, "Loaded by Dumpty")
+                extract.rows_loaded = bq_rows
+                extract.bq_bytes = bq_bytes
+            else:
+                # Create empty table directly
+                bigquery_create_table(
+                    f"{self.config.target_dataset}.{normalized_table_name}", extract.bq_schema)
+                extract.rows_loaded = 0
+                extract.bq_bytes = 0
         return extract
 
     def reconcile(self, table_names: List[str]):

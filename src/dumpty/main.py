@@ -3,14 +3,10 @@ import json
 import logging
 import os
 import sys
-import time
-from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from datetime import datetime
-from math import ceil
 from pathlib import Path
-from queue import Queue, Empty
-from threading import Thread
-from typing import Callable, List
+from queue import Empty
+from typing import List
 
 import psutil
 from alive_progress import alive_bar
@@ -18,7 +14,6 @@ from jinja2 import Environment, FileSystemLoader, Template
 from sqlalchemy import create_engine
 from tenacity import (Retrying, stop_after_attempt, stop_after_delay,
                       wait_random_exponential)
-from tqdm import tqdm
 
 from dumpty import logger
 from dumpty.config import Config
@@ -27,6 +22,7 @@ from dumpty.extract_db import ExtractDB
 from dumpty.gcp import bigquery_create_dataset
 from dumpty.pipeline import Pipeline
 from dumpty.util import filter_shuffle
+from dumpty.worker import Submitter
 
 
 def config_from_args(argv) -> Config:
@@ -138,13 +134,15 @@ def main(args=None):
 
     summary = {
         "start_date": datetime.now(),
+        "schema": config.schema,
         "tables": [],
         "warnings": []
     }
+    completed: List[Extract] = []
 
     # Initialize SqlAlchemy
-    engine = create_engine(config.sqlalchemy.url, pool_size=config.sqlalchemy.pool_size, connect_args=config.sqlalchemy.connect_args,
-                           max_overflow=config.sqlalchemy.max_overflow, pool_pre_ping=True, echo=False)
+    engine = create_engine(config.sqlalchemy.url, pool_size=config.introspect_queue_size, connect_args=config.sqlalchemy.connect_args,
+                           pool_pre_ping=True, max_overflow=config.introspect_queue_size, echo=False)
 
     with ExtractDB(config.tinydb_database_file, default_table_name=config.schema) as extract_db:
         with Pipeline(engine, retryer, config) as pipeline:
@@ -154,74 +152,50 @@ def main(args=None):
                 # This can be very slow for databases with thousands of tables so it is off by default
                 pipeline.reconcile(config.tables)
 
-            for table in config.tables:
-                extract: Extract = extract_db.get(table)
-                pipeline.submit(extract)
+            Submitter([extract_db.get(table)
+                      for table in config.tables], pipeline.introspect_queue)
 
             count = 0
             with alive_bar(len(config.tables), dual_line=True, stats=False, disable=not config.progress_bar) as bar:
                 while count < len(config.tables):
+                    bar.text = f"| {pipeline.status()} | CPU:{psutil.cpu_percent()}% | MEM:{psutil.virtual_memory()[2]}%"
                     try:
-                        extract = pipeline.done_queue.get(timeout=1)
+                        extract: Extract = pipeline.done_queue.get(timeout=1)
                         if isinstance(extract, (Exception)):
                             logger.error(extract)
+                            pipeline.shutdown()
                             raise (extract)
                         extract_db.save(extract)
+                        completed.append(extract)
+                        summary['tables'].append(extract.name)
+                        if config.target_dataset is not None:
+                            if not extract.consistent():
+                                warning = f"{extract.name}: row count mismatch (expected: {extract.rows}, loaded: {extract.rows_loaded}+"
+                                logger.warning(warning)
+                                summary['warnings'].append(warning)
                         count += 1
                         bar()
                     except Empty:
                         pass
-                    finally:
-                        bar.text = f"introspecting: [{pipeline.introspect_queue.unfinished_tasks}] extracting: [{pipeline.extract_queue.unfinished_tasks}] loading: [{pipeline.load_queue.unfinished_tasks}]"
 
-    #         # Throttles the number of jobs submitted to Spark (and # concurrent pysql DB connections)
-    #         with ThreadPoolExecutor(max_workers=config.job_threads) as executor:
+    # Summarize
+    summary['end_date'] = datetime.now()
+    summary['elapsed_s'] = round(
+        (summary['end_date'] - summary['start_date']).total_seconds())
 
-    #             for table in config.tables:
-    #                 extract_jobs.append(executor.submit(
-    #                     extract_and_load, table, config, spark, introspector, retryer))
+    if config.target_dataset is not None:
+        summary['consistent'] = all(x.consistent() for x in completed)
+        summary['bq_bytes'] = sum(x.bq_bytes for x in completed)
 
-    #             with alive_bar(len(extract_jobs), dual_line=True, stats=False, disable=not config.progress_bar) as bar:
-    #                 for future in as_completed(extract_jobs):
-    #                     try:
-    #                         extracted_table: Extract = future.result()
-    #                         introspector.save(extracted_table)
-    #                         completed.append(extracted_table)
-    #                         logger.info(f"{extracted_table.name} complete")
-    #                     except Exception as ex:
-    #                         logger.error(ex)
-    #                         executor.shutdown(
-    #                             wait=False, cancel_futures=True)
-    #                         raise ex
-    #                     summary['tables'].append(extracted_table.name)
-    #                     if config.target_dataset is not None:
-    #                         if not extracted_table.consistent():
-    #                             warning = f"{extracted_table.name}: row count mismatch (expected: {extracted_table.rows}, loaded: {extracted_table.rows_loaded}+"
-    #                             logger.warning(warning)
-    #                             summary['warnings'].append(warning)
-    #                     bar.text = f"| {datetime.now().strftime('%H:%M:%S')} | System CPU: {psutil.cpu_percent()}% | Memory: {psutil.virtual_memory()[2]}%"
-    #                     bar()
+    if config.target_uri is not None:
+        summary['gcs_bytes'] = sum(x.gcs_bytes for x in completed)
 
-    #             logger.info("Extraction complete, shutting down")
+    with open(config.log_file, "w") as outfile:
+        outfile.write(json.dumps(summary, indent=4, default=str))
 
-    # # Summarize
-    # summary['end_date'] = datetime.now()
-    # summary['elapsed_s'] = round(
-    #     (summary['end_date'] - summary['start_date']).total_seconds())
-
-    # if config.target_dataset is not None:
-    #     summary['consistent'] = all(x.consistent() for x in completed)
-    #     summary['bq_bytes'] = sum(x.bq_bytes for x in completed)
-
-    # if config.target_uri is not None:
-    #     summary['gcs_bytes'] = sum(x.gcs_bytes for x in completed)
-
-    # with open(config.log_file, "w") as outfile:
-    #     outfile.write(json.dumps(summary, indent=4, default=str))
-
-    # if not len(summary['warnings']) == 0:
-    #     logger.warning(
-    #         f"{len(summary['tables'])} tables loaded, with warnings")
+    if not len(summary['warnings']) == 0:
+        logger.warning(
+            f"{len(summary['tables'])} tables loaded, with warnings")
 
 
 if __name__ == '__main__':

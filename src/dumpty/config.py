@@ -7,8 +7,6 @@ from dataclass_wizard import YAMLWizard
 @dataclass
 class SqlalchemyConfig:
     url: str
-    pool_size: 32
-    max_overflow: int = -1
     connect_args: dict = None
 
 
@@ -51,6 +49,6 @@ class Config(YAMLWizard):
     # Require at least 1m rows to partition a table
     partitioning_threshold: int = 1e6
 
-    introspect_threads: int = 32
-    extract_threads: int = 32
-    load_threads: int = 64
+    introspect_queue_size: int = 8
+    extract_queue_size: int = 8
+    load_queue_size: int = 32

@@ -1,11 +1,12 @@
 import os
 import re
 from pathlib import PurePath
+from typing import List
 from urllib.parse import urlparse
 
 from google.cloud.bigquery import Client as BigqueryClient
 from google.cloud.bigquery import (CreateDisposition, Dataset,
-                                   DatasetReference, LoadJobConfig,
+                                   DatasetReference, LoadJobConfig, TableReference, Table,
                                    SchemaField, SourceFormat, WriteDisposition)
 from google.cloud.exceptions import NotFound
 from google.cloud.storage import Blob, Bucket
@@ -83,7 +84,20 @@ def bigquery_create_dataset(dataset_ref: str, description: str = None, location:
         return client.create_dataset(dataset_ref)
 
 
-def bigquery_load(uri: str, table: str, format: str, schema: list[dict], description: str = None, location="US"):
+def bigquery_create_table(table_ref: str, schema: List[dict], description: str = None, labels: dict = {}) -> Table:
+    """
+    Creates a Table in BigQuery
+    """
+    client = BigqueryClient()
+    table_ref: Table = Table(TableReference.from_string(table_ref), schema)
+    table_ref.description = description
+    table_ref.labels = labels
+    logger.info(
+        f"Creating empty table {table_ref.dataset_id}.{table_ref.table_id}")
+    return client.create_table(table_ref, exists_ok=True)
+
+
+def bigquery_load(uri: str, table: str, format: str, schema: List[dict], description: str = None, location="US"):
     """
     Loads a dataset into BigQuery from GCS bucket
     """
