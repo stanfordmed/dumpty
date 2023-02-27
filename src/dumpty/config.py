@@ -49,6 +49,6 @@ class Config(YAMLWizard):
     # Require at least 1m rows to partition a table
     partitioning_threshold: int = 1e6
 
-    introspect_queue_size: int = 8
-    extract_queue_size: int = 8
-    load_queue_size: int = 32
+    introspect_workers: int = 8
+    extract_workers: int = 8
+    load_workers: int = 32

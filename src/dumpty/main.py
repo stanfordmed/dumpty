@@ -20,9 +20,8 @@ from dumpty.config import Config
 from dumpty.extract import Extract
 from dumpty.extract_db import ExtractDB
 from dumpty.gcp import bigquery_create_dataset
-from dumpty.pipeline import Pipeline
+from dumpty.pipeline import Pipeline, QueueSubmitter
 from dumpty.util import filter_shuffle
-from dumpty.worker import Submitter
 
 
 def config_from_args(argv) -> Config:
@@ -141,9 +140,10 @@ def main(args=None):
     completed: List[Extract] = []
 
     # Initialize SqlAlchemy
-    engine = create_engine(config.sqlalchemy.url, pool_size=config.introspect_queue_size, connect_args=config.sqlalchemy.connect_args,
-                           pool_pre_ping=True, max_overflow=config.introspect_queue_size, echo=False)
+    engine = create_engine(config.sqlalchemy.url, pool_size=config.introspect_workers, connect_args=config.sqlalchemy.connect_args,
+                           pool_pre_ping=True, max_overflow=config.introspect_workers, echo=False)
 
+    failed = False
     with ExtractDB(config.tinydb_database_file, default_table_name=config.schema) as extract_db:
         with Pipeline(engine, retryer, config) as pipeline:
 
@@ -152,15 +152,16 @@ def main(args=None):
                 # This can be very slow for databases with thousands of tables so it is off by default
                 pipeline.reconcile(config.tables)
 
-            Submitter([extract_db.get(table)
-                      for table in config.tables], pipeline.introspect_queue)
+            QueueSubmitter([extract_db.get(table)
+                            for table in config.tables], pipeline.introspect_queue)
 
             count = 0
             with alive_bar(len(config.tables), dual_line=True, stats=False, disable=not config.progress_bar) as bar:
-                while count < len(config.tables):
+                while count < len(config.tables) and pipeline.error_queue.qsize() == 0:
                     bar.text = f"| {pipeline.status()} | CPU:{psutil.cpu_percent()}% | MEM:{psutil.virtual_memory()[2]}%"
                     try:
-                        extract: Extract = pipeline.done_queue.get(timeout=1)
+                        extract: Extract = pipeline.done_queue.get(
+                            timeout=1)
                         if isinstance(extract, (Exception)):
                             logger.error(extract)
                             pipeline.shutdown()
@@ -177,6 +178,10 @@ def main(args=None):
                         bar()
                     except Empty:
                         pass
+
+                if pipeline.error_queue.qsize() > 0:
+                    failed = True
+                    pipeline.shutdown()
 
     # Summarize
     summary['end_date'] = datetime.now()
@@ -196,6 +201,10 @@ def main(args=None):
     if not len(summary['warnings']) == 0:
         logger.warning(
             f"{len(summary['tables'])} tables loaded, with warnings")
+
+    if failed:
+        logger.error("Extract failed")
+        exit(1)
 
 
 if __name__ == '__main__':

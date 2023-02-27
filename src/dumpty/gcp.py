@@ -11,7 +11,7 @@ from google.cloud.bigquery import (CreateDisposition, Dataset,
 from google.cloud.exceptions import NotFound
 from google.cloud.storage import Blob, Bucket
 from google.cloud.storage import Client as StorageClient
-
+from google.cloud.bigquery.retry import DEFAULT_RETRY
 from dumpty import logger
 
 
@@ -60,6 +60,7 @@ def bigquery_create_dataset(dataset_ref: str, description: str = None, location:
     """
     Creates a Dataset in BigQuery
     """
+    logger.info(f"Using dataset {dataset_ref}")
     client = BigqueryClient()
     exists = False
     ref = DatasetReference.from_string(dataset_ref)
@@ -77,10 +78,10 @@ def bigquery_create_dataset(dataset_ref: str, description: str = None, location:
     dataset_ref.location = location
     dataset_ref.labels = labels
     if exists:
-        logger.info(f"Updating dataset {dataset_ref.dataset_id}")
+        logger.debug(
+            f"Dataset {dataset_ref.dataset_id} already exists, updating")
         return client.update_dataset(dataset_ref, fields=["description", "location", "labels"])
     else:
-        logger.info(f"Creating dataset {dataset_ref.dataset_id}")
         return client.create_dataset(dataset_ref)
 
 
@@ -122,9 +123,9 @@ def bigquery_load(uri: str, table: str, format: str, schema: List[dict], descrip
         destination_table_description=description
     )
 
-    load_job = client.load_table_from_uri(
-        uri, table, job_config=job_config, location=location)
-
+    # Some tables may take longer to load than the default deadline of 600s
+    load_job = client.load_table_from_uri(uri, table, retry=DEFAULT_RETRY.with_timeout(
+        1800), job_config=job_config, location=location)
     load_job.result()
 
     return load_job.output_rows, load_job.output_bytes

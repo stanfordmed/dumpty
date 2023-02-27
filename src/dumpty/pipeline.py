@@ -1,8 +1,13 @@
 import json
+import traceback
+from dataclasses import dataclass
 from datetime import datetime
 from math import ceil, floor
 from queue import Queue
-from typing import List
+from random import uniform
+from threading import Thread
+from time import sleep
+from typing import Callable, List
 
 from pyspark import SparkConf
 from pyspark.sql import DataFrame, SparkSession
@@ -16,16 +21,84 @@ from tenacity import Retrying
 
 from dumpty import logger
 from dumpty.config import Config
-from dumpty.exceptions import ValidationException
+from dumpty.exceptions import ExtractException, ValidationException
 from dumpty.extract import Extract
 from dumpty.gcp import bigquery_create_table, bigquery_load, get_size_bytes
 from dumpty.sql import bq_schema
 from dumpty.util import normalize_str
-from dumpty.worker import WorkerPool
+
+
+@dataclass
+class Step:
+    """Initialize a :class:`.Step` instance. 
+       :param func: Function to apply to item received from :param in_queue:
+       :param in_queue: Queue to receive work for :param func:
+       :param out_queue: Queue to send result of applying :param func: :param in_queue:
+       :param error_queue: Queue to send exceptions from applying :param func:
+    """
+    func: Callable
+    in_queue: Queue
+    out_queue: Queue
+    error_queue: Queue
+
+
+class QueueWorker(Thread):
+
+    def __init__(self, step: Step):
+        self.step = step
+        self.busy = False
+        super().__init__()
+        self.daemon = True
+        self.start()
+
+    def run(self):
+        while True:
+            extract: Extract = self.step.in_queue.get()
+            try:
+                self.busy = True
+                self.step.out_queue.put(self.step.func(extract))
+            except Exception as ex:
+                try:
+                    raise ExtractException(extract) from ex
+                except ExtractException as ex:
+                    logger.error(ex)
+                    traceback.print_exc()
+                    self.step.error_queue.put(ex)
+            finally:
+                self.busy = False
+                self.step.in_queue.task_done()
+
+
+class QueueWorkerPool():
+    def __init__(self, step: Step, size: int):
+        self.step = step
+        self.workers = []
+        for _ in range(size):
+            self.workers.append(QueueWorker(step))
+
+    def busy_count(self):
+        return sum(worker.busy for worker in self.workers)
+
+
+class QueueSubmitter(Thread):
+    """Submits items to a queue, waiting up to one second between each to avoid bursting
+    """
+
+    def __init__(self, items, queue: Queue):
+        self.items = items
+        self.queue = queue
+        super().__init__()
+        self.daemon = True
+        self.start()
+
+    def run(self):
+        for item in self.items:
+            self.queue.put(item)
+            sleep(uniform(0.0, 1.0))
 
 
 class Pipeline:
-    """Wrapper class for the various stages of the ELT process
+    """Main class for the various stages of the ELT process
     """
 
     def __init__(self, engine: Engine, retryer: Retrying, config: Config):
@@ -41,19 +114,29 @@ class Pipeline:
         self._metadata = MetaData(bind=engine, schema=config.schema)
         self._inspector: Inspector = inspect(engine)
 
-        self.introspect_queue = Queue(config.introspect_queue_size)
-        self.extract_queue = Queue(config.extract_queue_size)
-        self.load_queue = Queue(config.load_queue_size)
+        self.introspect_queue = Queue(config.introspect_workers)
+        self.extract_queue = Queue(config.extract_workers)
+        self.load_queue = Queue(config.load_workers)
         self.done_queue = Queue()
+        self.error_queue = Queue()
 
-        self.introspect_workers = WorkerPool(
-            self.introspect, self.introspect_queue, self.extract_queue, self.introspect_queue.maxsize)
+        # Setup queues
+        introspect_step = Step(
+            self.introspect, self.introspect_queue, self.extract_queue, self.error_queue)
 
-        self.extract_workers = WorkerPool(
-            self.extract, self.extract_queue, self.load_queue,  self.extract_queue.maxsize)
+        extract_step = Step(
+            self.extract, self.extract_queue, self.load_queue, self.error_queue)
 
-        self.load_workers = WorkerPool(
-            self.load, self.load_queue, self.done_queue, self.load_queue.maxsize)
+        load_step = Step(self.load, self.load_queue,
+                         self.done_queue, self.error_queue)
+
+        self.introspect_workers = QueueWorkerPool(
+            introspect_step, self.introspect_queue.maxsize)
+
+        self.extract_workers = QueueWorkerPool(
+            extract_step, self.extract_queue.maxsize)
+
+        self.load_workers = QueueWorkerPool(load_step, self.load_queue.maxsize)
 
     def __enter__(self):
         ctx = SparkSession\
