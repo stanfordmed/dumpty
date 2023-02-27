@@ -2,13 +2,12 @@
 """
 
 
-class DumptyException(Exception):
-    """The base Dumpty Exception that all other exception classes extend."""
+class ValidationException(Exception):
+    """Errors in validation"""
 
 
-class ValidationException(DumptyException):
-    """Exceptions indicating bad input"""
-
-
-class SQLException(DumptyException):
-    """Exceptions indicating error from SQL server"""
+class ExtractException(Exception):
+    def __init__(self, extract):
+        self.extract = extract
+        self.message = f"Exception extracting {extract.name}"
+        super().__init__(self.message)

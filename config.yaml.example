@@ -48,3 +48,12 @@ target_partition_size_bytes: 52428800
 # Introspection expires after this many seconds since last
 introspection_expire_s: 604800
 tinydb_database_file: tinydb.json
+
+# Controls parallelism of SQL introspection workers (one SQL connection per worker)
+# note: introspect_workers + spark.threads = total parallel SQL queries
+introspect_workers: 8
+# No more than this number of Spark jobs will be in 'running' state.
+extract_workers: 4
+# Controls parallelism of BigQuery load operations 
+load_workers: 8
+
