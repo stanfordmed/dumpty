@@ -17,10 +17,9 @@ from tenacity import (Retrying, stop_after_attempt, stop_after_delay,
 
 from dumpty import logger
 from dumpty.config import Config
-from dumpty.extract import Extract
-from dumpty.extract_db import ExtractDB
+from dumpty.extract import Extract, ExtractDB
 from dumpty.gcp import bigquery_create_dataset
-from dumpty.pipeline import Pipeline, QueueSubmitter
+from dumpty.pipeline import Pipeline
 from dumpty.util import filter_shuffle
 
 
@@ -152,8 +151,7 @@ def main(args=None):
                 # This can be very slow for databases with thousands of tables so it is off by default
                 pipeline.reconcile(config.tables)
 
-            QueueSubmitter([extract_db.get(table)
-                            for table in config.tables], pipeline.introspect_queue)
+            pipeline.submit([extract_db.get(table) for table in config.tables])
 
             count = 0
             with alive_bar(len(config.tables), dual_line=True, stats=False, disable=not config.progress_bar) as bar:
