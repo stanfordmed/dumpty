@@ -24,7 +24,6 @@ from dumpty.config import Config
 from dumpty.exceptions import ExtractException, ValidationException
 from dumpty.extract import Extract
 from dumpty.gcp import bigquery_create_table, bigquery_load, get_size_bytes
-from dumpty.sql import bq_schema
 from dumpty.util import normalize_str
 
 
@@ -81,7 +80,7 @@ class QueueWorkerPool():
 
 
 class QueueSubmitter(Thread):
-    """Submits items to a queue, waiting up to one second between each to avoid bursting
+    """Submits items to a queue in a background thread, waiting up to one second between each to avoid bursting
     """
 
     def __init__(self, items, queue: Queue):
@@ -120,7 +119,7 @@ class Pipeline:
         self.done_queue = Queue()
         self.error_queue = Queue()
 
-        # Setup queues
+        # Setup ELT steps and queues
         introspect_step = Step(
             self.introspect, self.introspect_queue, self.extract_queue, self.error_queue)
 
@@ -156,11 +155,66 @@ class Pipeline:
     def normalize_df(df: DataFrame) -> DataFrame:
         return df.select([col(x).alias(normalize_str(x)) for x in df.columns])
 
+    @staticmethod
+    def bq_schema(table: Table) -> list[dict]:
+        """
+        Returns Table schema in BigQuery JSON schema format
+        """
+        col: Column
+        schemas = []
+        for col in table.columns:
+            schema = {}
+            schema['name'] = normalize_str(col.name)
+            schema['mode'] = "Nullable" if col.nullable else "Required"
+
+            if isinstance(col.type, (SmallInteger, Integer, BigInteger)):
+                schema['type'] = "INT64"
+            elif isinstance(col.type, (DateTime)):
+                schema['type'] = "DATETIME"
+            elif isinstance(col.type, (Date)):
+                schema['type'] = "DATE"
+            elif isinstance(col.type, (Float, REAL)):
+                schema['type'] = "FLOAT64"
+            elif isinstance(col.type, (String)):
+                schema['type'] = "STRING"
+            elif isinstance(col.type, (Boolean)):
+                schema['type'] = "BOOL"
+            elif isinstance(col.type, (LargeBinary)):
+                schema['type'] = "BYTES"
+            elif isinstance(col.type, (Numeric)):
+                p = col.type.precision
+                s = col.type.scale
+                if s == 0 and p <= 18:
+                    schema['type'] = "INT64"
+                elif (s >= 0 and s <= 9) and ((max(s, 1) <= p) and p <= s+29):
+                    schema['type'] = "NUMERIC"
+                    schema['precision'] = p
+                    schema['scale'] = s
+                elif (s >= 0 and s <= 38) and ((max(s, 1) <= p) and p <= s+38):
+                    schema['type'] = "BIGNUMERIC"
+                    schema['precision'] = p
+                    schema['scale'] = s
+            else:
+                logger.warning(
+                    f"Unmapped type in {table.name}.{col.name} ({col.type}), defaulting to STRING")
+                schema['type'] = "STRING"
+
+            schemas.append(schema)
+        return schemas
+
     def shutdown(self):
         self._spark_session.stop()
 
     def status(self) -> str:
-        return f"Introspecting: {self.introspect_workers.busy_count()} | Extracting {self.extract_workers.busy_count()} | Loading {self.load_workers.busy_count()}"
+        return f"Introspecting:{self.introspect_workers.busy_count()} | Extracting:{self.extract_workers.busy_count()} | Loading:{self.load_workers.busy_count()}"
+
+    def submit(self, extracts: List[Extract]):
+        """Starts a thread submitting extracts to the introspect_queue and returns immediately
+
+        Args:
+            extracts (List[Extract]): Extracts to start introspecting
+        """
+        QueueSubmitter(extracts, self.introspect_queue)
 
     def _julienne(self, table: Table, column: Column, width: int):
         logger.info(
@@ -181,22 +235,45 @@ class Pipeline:
                 .order_by(subquery.c.id)
             return [r[0] for r in query.all()]
 
-    def introspect(self, extract: Extract):
-        logger.info(
-            f"Introspecting {self.config.schema + '.' if self.config.schema is not None else ''}{extract.name}")
+    def introspect(self, extract: Extract) -> Extract:
+        """Introspects a SQL table: row counts, min, max, and partitions
+
+        Args:
+            extract (Extract): Extract instance to introspect
+
+        Returns:
+            Extract: Updated extract object (same object as input)
+        """
         # Introspect table from SQL database
         table = Table(extract.name, self._metadata, autoload=True)
 
-        ##
-        # TODO: only find min/max, julienne, if the introspection has "expired"
-        ##
+        if extract.introspect_date is not None:
+            # This table was introspected, is it time to refresh?
+            if self.config.introspection_expire_s > 0:
+                if (datetime.now() - extract.introspect_date).total_seconds() > self.config.introspection_expire_s:
+                    # Introspection has expired
+                    logger.info(
+                        f"Introspection for {extract.name} has expired")
+                    full_introspect = True
+                else:
+                    # Introspection has not expired
+                    full_introspect = False
+            else:
+                # Introspections _never_ expire
+                full_introspect = False
+        else:
+            # Never been introspected, or partitioning was modified from prior run
+            full_introspect = True
 
-        # Find min/max of PK (if it exists) and total row count
+        logger.info(
+            f"{'Deep' if full_introspect else 'Fast'} introspecting {extract.name}")
+
+        # Get row count (and min/max if this is a full introspection)
         pk = table.primary_key.columns[0] if table.primary_key else None
         with Session(self.engine) as session:
             if pk is not None:
                 is_numeric = isinstance(pk.type, sqltypes.Numeric)
-                if is_numeric:
+                if is_numeric and full_introspect:
                     qry = session.query(func.max(pk).label("max"),
                                         func.min(pk).label("min"),
                                         func.count().label("count")).select_from(table)
@@ -209,10 +286,16 @@ class Pipeline:
                         "count")).select_from(table)
                     extract.rows = qry.scalar()
             else:
-                # If no PK we'll just dump the entire table in a single thread
+                # If no PK dump the entire table in a single thread
                 qry = session.query(func.count().label(
                     "count")).select_from(table)
+                extract.max = None
+                extract.min = None
                 extract.rows = qry.scalar()
+
+        if not full_introspect:
+            # Stop here if this table was already partitioned recently
+            return extract
 
         # Only partition tables with a PK and rows exceeding partition_row_min
         if extract.rows >= self.config.partitioning_threshold and pk is not None:
@@ -221,7 +304,7 @@ class Pipeline:
             if extract.partitions is None:
                 extract.partitions = round(extract.rows / 1e6)
 
-            if extract.partitions > 1:
+            if extract.partitions > 0:
                 slice_width = floor(extract.rows / extract.partitions)
                 if is_numeric:
                     if (extract.rows == extract.max) or (extract.rows == extract.max - 1) or (abs(extract.rows - (extract.max - extract.min)) <= 1):
@@ -237,7 +320,8 @@ class Pipeline:
                                 slices.append(
                                     f"{pk.name} <= {intervals[i]} OR {pk.name} IS NULL ")
                             elif i == len(intervals):
-                                slices.append(f"{pk.name} > {intervals[i-1]}")
+                                slices.append(
+                                    f"{pk.name} > {intervals[i-1]}")
                             else:
                                 slices.append(
                                     f"{pk.name} > {intervals[i-1]} AND {pk.name} <= {intervals[i]}")
@@ -253,7 +337,8 @@ class Pipeline:
                             slices.append(
                                 f"{pk.name} <= '{intervals[i]}' OR {pk.name} IS NULL ")
                         elif i == len(intervals):
-                            slices.append(f"{pk.name} > '{intervals[i-1]}'")
+                            slices.append(
+                                f"{pk.name} > '{intervals[i-1]}'")
                         else:
                             slices.append(
                                 f"{pk.name} > '{intervals[i-1]}' AND {pk.name} <= '{intervals[i]}'")
@@ -268,7 +353,8 @@ class Pipeline:
             extract.predicates = None
 
         # Regenerate BQ Schema if needed
-        extract.bq_schema = bq_schema(table)
+        extract.bq_schema = self.bq_schema(table)
+
         extract.introspect_date = datetime.now()
 
         return extract
@@ -289,7 +375,7 @@ class Pipeline:
                 properties=self.config.jdbc.properties
             )
             logger.info(
-                f"Extracting {extract.name} as {n_table_name} ({len(extract.predicates)} predicates)")
+                f"Extracting {extract.name} as {n_table_name} ({len(extract.predicates)} slices)")
 
         elif extract.partition_column is not None and extract.min is not None and extract.max is not None:
             session.sparkContext.setJobDescription(
@@ -331,6 +417,14 @@ class Pipeline:
         return final_uri
 
     def extract(self, extract: Extract) -> Extract:
+        """Submits an Extract object to Spark for dumping
+
+        Args:
+            extract (Extract): Extract instance to dump
+
+        Returns:
+            Extract: Extracted instance (same as input)
+        """
         # Extract the table with Spark
         extract.extract_uri = None
 
@@ -357,22 +451,20 @@ class Pipeline:
         return extract
 
     def load(self, extract: Extract) -> Extract:
+        """Loads an Extract into BigQuery
+
+        Args:
+            extract (Extract): Extract instance to load into BigQuery
+
+        Returns:
+            Extract: Extract instance that was loaded (same object as input)
+        """
 
         normalized_table_name = normalize_str(extract.name)
 
         # Load into BigQuery
         if self.config.target_dataset is not None:
             if extract.rows > 0:
-
-                # # Write table schema
-                # json_schema = json.dumps(extract.bq_schema, indent=4)
-                # if "gs://" not in self.config.target_uri:
-                #     with open(f"{self.config.target_uri}/{normalize_str(extract.name)}/schema.json", "wt") as f:
-                #         f.write(json_schema)
-                # else:
-                #     self.retryer(upload_from_string, json_schema,
-                #                  f"{self.config.target_uri}/{normalize_str(extract.name)}/schema.json")
-
                 # Load from GCS into BQ
                 bq_rows: int = 0
                 bq_bytes: int = 0
@@ -389,12 +481,14 @@ class Pipeline:
                     f"{self.config.target_dataset}.{normalized_table_name}", extract.bq_schema)
                 extract.rows_loaded = 0
                 extract.bq_bytes = 0
+
         return extract
 
     def reconcile(self, table_names: List[str]):
         """Checks if a list of table names exist in TinyDB and SQL database
             :param table_names: List of table names to validate against database
-            :raises: :class:`.ValidationException` when a table is not found
+            :raises: :class:`.ValidationException` when a table is not found. Use this
+            to fail early if you are not sure if the tables are actually in the SQL database.
         """
         logger.info(f"Enumerating tables in schema {self.config.schema}")
         sql_tables = self._inspector.get_table_names(schema=self.config.schema)
