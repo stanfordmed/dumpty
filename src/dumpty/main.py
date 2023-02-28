@@ -151,19 +151,15 @@ def main(args=None):
                 # This can be very slow for databases with thousands of tables so it is off by default
                 pipeline.reconcile(config.tables)
 
+            # Start a background thread to feed Extract objects to introspect queue
             pipeline.submit([extract_db.get(table) for table in config.tables])
 
             count = 0
             with alive_bar(len(config.tables), dual_line=True, stats=False, disable=not config.progress_bar) as bar:
                 while count < len(config.tables) and pipeline.error_queue.qsize() == 0:
-                    bar.text = f"| {pipeline.status()} | CPU:{psutil.cpu_percent()}% | MEM:{psutil.virtual_memory()[2]}%"
+                    bar.text = f"| {pipeline.status()} | CPU:{psutil.cpu_percent()}% | Mem:{psutil.virtual_memory()[2]}%"
                     try:
-                        extract: Extract = pipeline.done_queue.get(
-                            timeout=1)
-                        if isinstance(extract, (Exception)):
-                            logger.error(extract)
-                            pipeline.shutdown()
-                            raise (extract)
+                        extract: Extract = pipeline.done_queue.get(timeout=1)
                         extract_db.save(extract)
                         completed.append(extract)
                         summary['tables'].append(extract.name)

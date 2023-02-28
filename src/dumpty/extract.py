@@ -12,7 +12,9 @@ from tinydb_serialization.serializers import DateTimeSerializer
 
 @dataclass
 class Extract:
-    """An extract of a table. This class is serialized as JSON in TinyDB so no complex data types."""
+    """This class represents the state of an Extract as it flows through the ELT pipeline. 
+    This class is serialized as JSON in TinyDB so no complex data types.
+    """
     name: str
     min: str = None
     max: str = None
@@ -89,4 +91,12 @@ class ExtractDB:
             self._db.upsert(extract.__dict__, Query().name == extract.name)
 
     def get(self, table_name: str) -> Extract:
+        """Finds an Extract in TinyDB with the name :table_name:
+
+        Args:
+            table_name (str): Name of table to retrieve from TinyDB
+
+        Returns:
+            Extract: Existing Extract from TinyDB, or new Extract if none found
+        """
         return self.extracts.get(table_name, Extract(table_name))

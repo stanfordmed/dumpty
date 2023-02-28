@@ -80,7 +80,7 @@ class QueueWorkerPool():
 
 
 class QueueSubmitter(Thread):
-    """Submits items to a queue, waiting up to one second between each to avoid bursting
+    """Submits items to a queue in a background thread, waiting up to one second between each to avoid bursting
     """
 
     def __init__(self, items, queue: Queue):
@@ -119,7 +119,7 @@ class Pipeline:
         self.done_queue = Queue()
         self.error_queue = Queue()
 
-        # Setup queues
+        # Setup ELT steps and queues
         introspect_step = Step(
             self.introspect, self.introspect_queue, self.extract_queue, self.error_queue)
 
@@ -206,9 +206,14 @@ class Pipeline:
         self._spark_session.stop()
 
     def status(self) -> str:
-        return f"Introspecting: {self.introspect_workers.busy_count()} | Extracting {self.extract_workers.busy_count()} | Loading {self.load_workers.busy_count()}"
+        return f"Introspecting:{self.introspect_workers.busy_count()} | Extracting:{self.extract_workers.busy_count()} | Loading:{self.load_workers.busy_count()}"
 
     def submit(self, extracts: List[Extract]):
+        """Starts a thread submitting extracts to the introspect_queue and returns immediately
+
+        Args:
+            extracts (List[Extract]): Extracts to start introspecting
+        """
         QueueSubmitter(extracts, self.introspect_queue)
 
     def _julienne(self, table: Table, column: Column, width: int):
@@ -230,8 +235,15 @@ class Pipeline:
                 .order_by(subquery.c.id)
             return [r[0] for r in query.all()]
 
-    def introspect(self, extract: Extract):
+    def introspect(self, extract: Extract) -> Extract:
+        """Introspects a SQL table: row counts, min, max, and partitions
 
+        Args:
+            extract (Extract): Extract instance to introspect
+
+        Returns:
+            Extract: Updated extract object (same object as input)
+        """
         # Introspect table from SQL database
         table = Table(extract.name, self._metadata, autoload=True)
 
@@ -240,6 +252,8 @@ class Pipeline:
             if self.config.introspection_expire_s > 0:
                 if (datetime.now() - extract.introspect_date).total_seconds() > self.config.introspection_expire_s:
                     # Introspection has expired
+                    logger.info(
+                        f"Introspection for {extract.name} has expired")
                     full_introspect = True
                 else:
                     # Introspection has not expired
@@ -280,6 +294,7 @@ class Pipeline:
                 extract.rows = qry.scalar()
 
         if not full_introspect:
+            # Stop here if this table was already partitioned recently
             return extract
 
         # Only partition tables with a PK and rows exceeding partition_row_min
@@ -402,6 +417,14 @@ class Pipeline:
         return final_uri
 
     def extract(self, extract: Extract) -> Extract:
+        """Submits an Extract object to Spark for dumping
+
+        Args:
+            extract (Extract): Extract instance to dump
+
+        Returns:
+            Extract: Extracted instance (same as input)
+        """
         # Extract the table with Spark
         extract.extract_uri = None
 
@@ -428,6 +451,14 @@ class Pipeline:
         return extract
 
     def load(self, extract: Extract) -> Extract:
+        """Loads an Extract into BigQuery
+
+        Args:
+            extract (Extract): Extract instance to load into BigQuery
+
+        Returns:
+            Extract: Extract instance that was loaded (same object as input)
+        """
 
         normalized_table_name = normalize_str(extract.name)
 
@@ -456,7 +487,8 @@ class Pipeline:
     def reconcile(self, table_names: List[str]):
         """Checks if a list of table names exist in TinyDB and SQL database
             :param table_names: List of table names to validate against database
-            :raises: :class:`.ValidationException` when a table is not found
+            :raises: :class:`.ValidationException` when a table is not found. Use this
+            to fail early if you are not sure if the tables are actually in the SQL database.
         """
         logger.info(f"Enumerating tables in schema {self.config.schema}")
         sql_tables = self._inspector.get_table_names(schema=self.config.schema)
