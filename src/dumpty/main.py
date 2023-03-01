@@ -155,7 +155,7 @@ def main(args=None):
 
             count = 0
             with alive_bar(len(config.tables), dual_line=True, stats=False, disable=not config.progress_bar) as bar:
-                while count < len(config.tables) and pipeline.error_queue.qsize() == 0:
+                while count < len(config.tables) and pipeline.error_queue.qsize() == 0 and not failed:
                     bar.text = f"| {pipeline.status()} | CPU:{psutil.cpu_percent()}% | Mem:{psutil.virtual_memory()[2]}%"
                     try:
                         extract: Extract = pipeline.done_queue.get(timeout=1)
@@ -171,10 +171,14 @@ def main(args=None):
                         bar()
                     except Empty:
                         pass
+                    except KeyboardInterrupt:
+                        logger.error("Control-c pressed, shutting down!")
+                        pipeline.shutdown()
+                        failed = True
 
                 if pipeline.error_queue.qsize() > 0:
-                    failed = True
                     pipeline.shutdown()
+                    failed = True
 
     # Summarize
     summary['end_date'] = datetime.now()

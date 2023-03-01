@@ -3,7 +3,7 @@ import traceback
 from dataclasses import dataclass
 from datetime import datetime
 from math import ceil, floor
-from queue import Queue
+from queue import Empty, Queue
 from random import uniform
 from threading import Thread
 from time import sleep
@@ -46,26 +46,33 @@ class QueueWorker(Thread):
     def __init__(self, step: Step):
         self.step = step
         self.busy = False
+        self._shutdown = False
         super().__init__()
         self.daemon = True
         self.start()
 
     def run(self):
-        while True:
-            extract: Extract = self.step.in_queue.get()
+        while not self._shutdown:
             try:
-                self.busy = True
-                self.step.out_queue.put(self.step.func(extract))
-            except Exception as ex:
+                extract: Extract = self.step.in_queue.get(timeout=1)
                 try:
-                    raise ExtractException(extract) from ex
-                except ExtractException as ex:
-                    logger.error(ex)
-                    traceback.print_exc()
-                    self.step.error_queue.put(ex)
-            finally:
-                self.busy = False
-                self.step.in_queue.task_done()
+                    self.busy = True
+                    self.step.out_queue.put(self.step.func(extract))
+                except Exception as ex:
+                    try:
+                        raise ExtractException(extract) from ex
+                    except ExtractException as ex:
+                        logger.error(ex)
+                        traceback.print_exc()
+                        self.step.error_queue.put(ex)
+                finally:
+                    self.busy = False
+                    self.step.in_queue.task_done()
+            except Empty:
+                pass
+
+    def shutdown(self):
+        self._shutdown = True
 
 
 class QueueWorkerPool():
@@ -77,6 +84,10 @@ class QueueWorkerPool():
 
     def busy_count(self):
         return sum(worker.busy for worker in self.workers)
+
+    def shutdown(self):
+        for worker in self.workers:
+            worker.shutdown()
 
 
 class QueueSubmitter(Thread):
@@ -204,6 +215,9 @@ class Pipeline:
         return schemas
 
     def shutdown(self):
+        self.introspect_workers.shutdown()
+        self.extract_workers.shutdown()
+        self.load_workers.shutdown()
         self._spark_session.stop()
 
     def status(self) -> str:
@@ -365,10 +379,15 @@ class Pipeline:
         return extract
 
     def _extract(self, extract: Extract, uri: str) -> str:
+
+        session = self._spark_session
+        if session.sparkContext._jsc is None:
+            raise ExtractException(
+                extract, f"Spark context lost trying to extract {extract.name}, is Spark shutting down?")
+
         # Always normalize table name
         n_table_name = normalize_str(extract.name)
 
-        session = self._spark_session
         # spark.sparkContext.setJobGroup(table.name, "full extract")
         if extract.predicates is not None and len(extract.predicates) > 0:
             session.sparkContext.setJobDescription(

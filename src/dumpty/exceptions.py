@@ -7,7 +7,10 @@ class ValidationException(Exception):
 
 
 class ExtractException(Exception):
-    def __init__(self, extract):
+    def __init__(self, extract, message: str = None):
         self.extract = extract
-        self.message = f"Exception extracting {extract.name}"
+        if message is None:
+            self.message = f"Exception extracting {extract.name}"
+        else:
+            self.message = message
         super().__init__(self.message)
