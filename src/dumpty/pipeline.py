@@ -23,7 +23,7 @@ from dumpty import logger
 from dumpty.config import Config
 from dumpty.exceptions import ExtractException, ValidationException
 from dumpty.extract import Extract
-from dumpty.gcp import bigquery_create_table, bigquery_load, get_size_bytes
+from dumpty.gcp import GCP
 from dumpty.util import normalize_str
 
 
@@ -80,7 +80,7 @@ class QueueWorkerPool():
 
 
 class QueueSubmitter(Thread):
-    """Submits items to a queue in a background thread, waiting up to one second between each to avoid bursting
+    """Submits items to a queue in a background thread, waiting 0.0-0.25s between each to avoid hammering
     """
 
     def __init__(self, items, queue: Queue):
@@ -93,7 +93,7 @@ class QueueSubmitter(Thread):
     def run(self):
         for item in self.items:
             self.queue.put(item)
-            sleep(uniform(0.0, 1.0))
+            sleep(uniform(0.0, 0.25))
 
 
 class Pipeline:
@@ -110,6 +110,7 @@ class Pipeline:
         self.config = config
         self.engine = engine
         self.retryer = retryer
+        self.gcp = GCP()
         self._metadata = MetaData(bind=engine, schema=config.schema)
         self._inspector: Inspector = inspect(engine)
 
@@ -439,7 +440,8 @@ class Pipeline:
 
             # Suggest a recommended partition size based on the actual extract size (for next run)
             if extract.partitions > 1 and "gs://" in extract_uri:  # only resizes based on GCS targets, for now
-                extract.gcs_bytes = self.retryer(get_size_bytes, extract_uri)
+                extract.gcs_bytes = self.retryer(
+                    self.gcp.get_size_bytes, extract_uri)
                 recommendation = ceil(
                     extract.gcs_bytes / self.config.target_partition_size_bytes)
                 if recommendation != extract.partitions:
@@ -471,13 +473,13 @@ class Pipeline:
                 if self.config.target_dataset is not None:
                     logger.info(
                         f"Loading {extract.name} into BigQuery as {normalized_table_name} from {extract.extract_uri}")
-                    bq_rows, bq_bytes = self.retryer(bigquery_load, extract.extract_uri, f"{self.config.target_dataset}.{normalized_table_name}",
+                    bq_rows, bq_bytes = self.retryer(self.gcp.bigquery_load, extract.extract_uri, f"{self.config.target_dataset}.{normalized_table_name}",
                                                      self.config.spark.format, extract.bq_schema, "Loaded by Dumpty")
                 extract.rows_loaded = bq_rows
                 extract.bq_bytes = bq_bytes
             else:
                 # Create empty table directly
-                bigquery_create_table(
+                self.gcp.bigquery_create_table(
                     f"{self.config.target_dataset}.{normalized_table_name}", extract.bq_schema)
                 extract.rows_loaded = 0
                 extract.bq_bytes = 0

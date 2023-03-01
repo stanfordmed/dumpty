@@ -18,7 +18,6 @@ from tenacity import (Retrying, stop_after_attempt, stop_after_delay,
 from dumpty import logger
 from dumpty.config import Config
 from dumpty.extract import Extract, ExtractDB
-from dumpty.gcp import bigquery_create_dataset
 from dumpty.pipeline import Pipeline
 from dumpty.util import filter_shuffle
 
@@ -119,11 +118,6 @@ def main(args=None):
     retryer = Retrying(wait=wait_random_exponential(multiplier=1, min=5, max=60), stop=(
         stop_after_delay(300) | stop_after_attempt(0 if not config.retry else 999)), reraise=True)
 
-    # Create destination dataset
-    if config.target_dataset is not None:
-        retryer(bigquery_create_dataset,
-                dataset_ref=config.target_dataset, drop=config.drop_dataset)
-
     # Create spark logdir if needed
     spark_log_dir = config.spark.properties.get('spark.eventLog.dir')
     if spark_log_dir is not None:
@@ -145,6 +139,11 @@ def main(args=None):
     failed = False
     with ExtractDB(config.tinydb_database_file, default_table_name=config.schema) as extract_db:
         with Pipeline(engine, retryer, config) as pipeline:
+
+            # Create destination dataset
+            if config.target_dataset is not None:
+                retryer(pipeline.gcp.bigquery_create_dataset,
+                        dataset_ref=config.target_dataset, drop=config.drop_dataset)
 
             if config.reconcile:
                 # Check if tables being requested actually exist in SQL database before doing anything else
