@@ -271,25 +271,29 @@ class Pipeline:
 
         # Get row count (and min/max if this is a full introspection)
         pk = table.primary_key.columns[0] if table.primary_key else None
+        if self.engine.dialect.name == "mssql":
+            # MSSQL COUNT(*) can overflow if > INT_MAX
+            count_fn = func.count_big("*")
+        else:
+            count_fn = func.count()
         with Session(self.engine) as session:
             if pk is not None:
                 is_numeric = isinstance(pk.type, sqltypes.Numeric)
                 if is_numeric and full_introspect:
                     qry = session.query(func.max(pk).label("max"),
                                         func.min(pk).label("min"),
-                                        func.count().label("count")).select_from(table)
+                                        count_fn.label("count")).select_from(table)
                     res = qry.one()
                     extract.max = res.max
                     extract.min = res.min
                     extract.rows = res.count
                 else:
-                    qry = session.query(func.count().label(
+                    qry = session.query(count_fn.label(
                         "count")).select_from(table)
                     extract.rows = qry.scalar()
             else:
                 # If no PK dump the entire table in a single thread
-                qry = session.query(func.count().label(
-                    "count")).select_from(table)
+                qry = session.query(count_fn.label("count")).select_from(table)
                 extract.max = None
                 extract.min = None
                 extract.rows = qry.scalar()
