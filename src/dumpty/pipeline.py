@@ -12,7 +12,7 @@ from typing import Callable, List
 from pyspark import SparkConf
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql.functions import col
-from sqlalchemy import Column, MetaData, Table, func, inspect
+from sqlalchemy import Column, MetaData, Table, func, inspect, literal_column
 from sqlalchemy.engine import Engine, Inspector
 from sqlalchemy.orm import Session
 from sqlalchemy.sql import sqltypes
@@ -287,9 +287,9 @@ class Pipeline:
         pk = table.primary_key.columns[0] if table.primary_key else None
         if self.engine.dialect.name == "mssql":
             # MSSQL COUNT(*) can overflow if > INT_MAX
-            count_fn = func.count_big(pk)
+            count_fn = func.count_big(literal_column("*"))
         else:
-            count_fn = func.count(pk)
+            count_fn = func.count(literal_column("*"))
         with Session(self.engine) as session:
             if pk is not None:
                 is_numeric = isinstance(pk.type, sqltypes.Numeric)
