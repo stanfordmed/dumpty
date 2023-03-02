@@ -1,5 +1,6 @@
 import random
 import re
+import datetime
 
 
 def normalize_str(x: str) -> str:
@@ -16,3 +17,12 @@ def filter_shuffle(seq):
         return result
     except:
         return seq
+
+
+def sql_string(value):
+    """Some Python types cast to String values that break SQL when cast to varchar.
+    For example datetime includes 6-digit microseconds which breaks MSSQL.
+    """
+    if isinstance(value, (datetime.datetime)):
+        return value.strftime("%Y-%m-%d %H:%M:%S")
+    return value

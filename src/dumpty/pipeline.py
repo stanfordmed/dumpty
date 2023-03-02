@@ -24,7 +24,7 @@ from dumpty.config import Config
 from dumpty.exceptions import ExtractException, ValidationException
 from dumpty.extract import Extract
 from dumpty.gcp import GCP
-from dumpty.util import normalize_str
+from dumpty.util import normalize_str, sql_string
 
 
 @dataclass
@@ -287,9 +287,9 @@ class Pipeline:
         pk = table.primary_key.columns[0] if table.primary_key else None
         if self.engine.dialect.name == "mssql":
             # MSSQL COUNT(*) can overflow if > INT_MAX
-            count_fn = func.count_big("*")
+            count_fn = func.count_big(pk)
         else:
-            count_fn = func.count()
+            count_fn = func.count(pk)
         with Session(self.engine) as session:
             if pk is not None:
                 is_numeric = isinstance(pk.type, sqltypes.Numeric)
@@ -354,13 +354,13 @@ class Pipeline:
                     while i <= len(intervals):
                         if i == 0:
                             slices.append(
-                                f"{pk.name} <= '{intervals[i]}' OR {pk.name} IS NULL ")
+                                f"{pk.name} <= '{sql_string(intervals[i])}' OR {pk.name} IS NULL ")
                         elif i == len(intervals):
                             slices.append(
-                                f"{pk.name} > '{intervals[i-1]}'")
+                                f"{pk.name} > '{sql_string(intervals[i-1])}'")
                         else:
                             slices.append(
-                                f"{pk.name} > '{intervals[i-1]}' AND {pk.name} <= '{intervals[i]}'")
+                                f"{pk.name} > '{sql_string(intervals[i-1])}' AND {pk.name} <= '{sql_string(intervals[i])}'")
                         i += 1
                     extract.predicates = slices
             else:
