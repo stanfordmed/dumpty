@@ -12,8 +12,8 @@ import psutil
 from alive_progress import alive_bar
 from jinja2 import Environment, FileSystemLoader, Template
 from sqlalchemy import create_engine
-from tenacity import (Retrying, stop_after_attempt, stop_after_delay,
-                      wait_random_exponential)
+from tenacity import (Retrying, after_log, stop_after_attempt,
+                      stop_after_delay, wait_random_exponential)
 
 from dumpty import logger
 from dumpty.config import Config
@@ -113,10 +113,10 @@ def main(args=None):
 
     config: Config = config_from_args(args)
 
-    # Default retry for network operations: 2^x * 1 second between each retry, starting with 5s, up to 60s, die after 5 minutes of retries
+    # Default retry for network operations: 2^x * 1 second between each retry, starting with 5s, up to 30s, die after 30 minutes of retries
     # reraise=True places the exception at the END of the stack-trace dump
-    retryer = Retrying(wait=wait_random_exponential(multiplier=1, min=5, max=60), stop=(
-        stop_after_delay(300) | stop_after_attempt(0 if not config.retry else 999)), reraise=True)
+    retryer = Retrying(wait=wait_random_exponential(multiplier=1, min=5, max=30), after=after_log(logger, logging.ERROR),
+                       stop=(stop_after_delay(1800) | stop_after_attempt(0 if not config.retry else 999)), reraise=True)
 
     # Create spark logdir if needed
     spark_log_dir = config.spark.properties.get('spark.eventLog.dir')
