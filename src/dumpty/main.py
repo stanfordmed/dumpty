@@ -115,7 +115,7 @@ def main(args=None):
 
     # Default retry for network operations: 2^x * 1 second between each retry, starting with 5s, up to 30s, die after 30 minutes of retries
     # reraise=True places the exception at the END of the stack-trace dump
-    retryer = Retrying(wait=wait_random_exponential(multiplier=1, min=5, max=30), after=after_log(logger, logging.ERROR),
+    retryer = Retrying(wait=wait_random_exponential(multiplier=1, min=5, max=30), after=after_log(logger, logging.WARNING),
                        stop=(stop_after_delay(1800) | stop_after_attempt(0 if not config.retry else 999)), reraise=True)
 
     # Create spark logdir if needed
