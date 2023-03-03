@@ -3,7 +3,7 @@ import traceback
 from dataclasses import dataclass
 from datetime import datetime
 from math import ceil, floor
-from queue import Queue
+from queue import Empty, Queue
 from random import uniform
 from threading import Thread
 from time import sleep
@@ -12,7 +12,7 @@ from typing import Callable, List
 from pyspark import SparkConf
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql.functions import col
-from sqlalchemy import Column, MetaData, Table, func, inspect
+from sqlalchemy import Column, MetaData, Table, func, inspect, literal_column
 from sqlalchemy.engine import Engine, Inspector
 from sqlalchemy.orm import Session
 from sqlalchemy.sql import sqltypes
@@ -23,8 +23,8 @@ from dumpty import logger
 from dumpty.config import Config
 from dumpty.exceptions import ExtractException, ValidationException
 from dumpty.extract import Extract
-from dumpty.gcp import bigquery_create_table, bigquery_load, get_size_bytes
-from dumpty.util import normalize_str
+from dumpty.gcp import GCP
+from dumpty.util import normalize_str, sql_string
 
 
 @dataclass
@@ -46,26 +46,33 @@ class QueueWorker(Thread):
     def __init__(self, step: Step):
         self.step = step
         self.busy = False
+        self._shutdown = False
         super().__init__()
         self.daemon = True
         self.start()
 
     def run(self):
-        while True:
-            extract: Extract = self.step.in_queue.get()
+        while not self._shutdown:
             try:
-                self.busy = True
-                self.step.out_queue.put(self.step.func(extract))
-            except Exception as ex:
+                extract: Extract = self.step.in_queue.get(timeout=1)
                 try:
-                    raise ExtractException(extract) from ex
-                except ExtractException as ex:
-                    logger.error(ex)
-                    traceback.print_exc()
-                    self.step.error_queue.put(ex)
-            finally:
-                self.busy = False
-                self.step.in_queue.task_done()
+                    self.busy = True
+                    self.step.out_queue.put(self.step.func(extract))
+                except Exception as ex:
+                    try:
+                        raise ExtractException(extract) from ex
+                    except ExtractException as ex:
+                        logger.error(ex)
+                        traceback.print_exc()
+                        self.step.error_queue.put(ex)
+                finally:
+                    self.busy = False
+                    self.step.in_queue.task_done()
+            except Empty:
+                pass
+
+    def shutdown(self):
+        self._shutdown = True
 
 
 class QueueWorkerPool():
@@ -78,9 +85,13 @@ class QueueWorkerPool():
     def busy_count(self):
         return sum(worker.busy for worker in self.workers)
 
+    def shutdown(self):
+        for worker in self.workers:
+            worker.shutdown()
+
 
 class QueueSubmitter(Thread):
-    """Submits items to a queue in a background thread, waiting up to one second between each to avoid bursting
+    """Submits items to a queue in a background thread, waiting 0.0-0.25s between each to avoid hammering
     """
 
     def __init__(self, items, queue: Queue):
@@ -93,7 +104,7 @@ class QueueSubmitter(Thread):
     def run(self):
         for item in self.items:
             self.queue.put(item)
-            sleep(uniform(0.0, 1.0))
+            sleep(uniform(0.0, 0.25))
 
 
 class Pipeline:
@@ -110,6 +121,7 @@ class Pipeline:
         self.config = config
         self.engine = engine
         self.retryer = retryer
+        self.gcp = GCP()
         self._metadata = MetaData(bind=engine, schema=config.schema)
         self._inspector: Inspector = inspect(engine)
 
@@ -203,6 +215,9 @@ class Pipeline:
         return schemas
 
     def shutdown(self):
+        self.introspect_workers.shutdown()
+        self.extract_workers.shutdown()
+        self.load_workers.shutdown()
         self._spark_session.stop()
 
     def status(self) -> str:
@@ -270,25 +285,29 @@ class Pipeline:
 
         # Get row count (and min/max if this is a full introspection)
         pk = table.primary_key.columns[0] if table.primary_key else None
+        if self.engine.dialect.name == "mssql":
+            # MSSQL COUNT(*) can overflow if > INT_MAX
+            count_fn = func.count_big(literal_column("*"))
+        else:
+            count_fn = func.count(literal_column("*"))
         with Session(self.engine) as session:
             if pk is not None:
                 is_numeric = isinstance(pk.type, sqltypes.Numeric)
                 if is_numeric and full_introspect:
                     qry = session.query(func.max(pk).label("max"),
                                         func.min(pk).label("min"),
-                                        func.count().label("count")).select_from(table)
+                                        count_fn.label("count")).select_from(table)
                     res = qry.one()
                     extract.max = res.max
                     extract.min = res.min
                     extract.rows = res.count
                 else:
-                    qry = session.query(func.count().label(
+                    qry = session.query(count_fn.label(
                         "count")).select_from(table)
                     extract.rows = qry.scalar()
             else:
                 # If no PK dump the entire table in a single thread
-                qry = session.query(func.count().label(
-                    "count")).select_from(table)
+                qry = session.query(count_fn.label("count")).select_from(table)
                 extract.max = None
                 extract.min = None
                 extract.rows = qry.scalar()
@@ -335,13 +354,13 @@ class Pipeline:
                     while i <= len(intervals):
                         if i == 0:
                             slices.append(
-                                f"{pk.name} <= '{intervals[i]}' OR {pk.name} IS NULL ")
+                                f"{pk.name} <= '{sql_string(intervals[i])}' OR {pk.name} IS NULL ")
                         elif i == len(intervals):
                             slices.append(
-                                f"{pk.name} > '{intervals[i-1]}'")
+                                f"{pk.name} > '{sql_string(intervals[i-1])}'")
                         else:
                             slices.append(
-                                f"{pk.name} > '{intervals[i-1]}' AND {pk.name} <= '{intervals[i]}'")
+                                f"{pk.name} > '{sql_string(intervals[i-1])}' AND {pk.name} <= '{sql_string(intervals[i])}'")
                         i += 1
                     extract.predicates = slices
             else:
@@ -360,10 +379,15 @@ class Pipeline:
         return extract
 
     def _extract(self, extract: Extract, uri: str) -> str:
+
+        session = self._spark_session
+        if session.sparkContext._jsc is None:
+            raise ExtractException(
+                extract, f"Spark context lost trying to extract {extract.name}, is Spark shutting down?")
+
         # Always normalize table name
         n_table_name = normalize_str(extract.name)
 
-        session = self._spark_session
         # spark.sparkContext.setJobGroup(table.name, "full extract")
         if extract.predicates is not None and len(extract.predicates) > 0:
             session.sparkContext.setJobDescription(
@@ -439,7 +463,8 @@ class Pipeline:
 
             # Suggest a recommended partition size based on the actual extract size (for next run)
             if extract.partitions > 1 and "gs://" in extract_uri:  # only resizes based on GCS targets, for now
-                extract.gcs_bytes = self.retryer(get_size_bytes, extract_uri)
+                extract.gcs_bytes = self.retryer(
+                    self.gcp.get_size_bytes, extract_uri)
                 recommendation = ceil(
                     extract.gcs_bytes / self.config.target_partition_size_bytes)
                 if recommendation != extract.partitions:
@@ -471,13 +496,13 @@ class Pipeline:
                 if self.config.target_dataset is not None:
                     logger.info(
                         f"Loading {extract.name} into BigQuery as {normalized_table_name} from {extract.extract_uri}")
-                    bq_rows, bq_bytes = self.retryer(bigquery_load, extract.extract_uri, f"{self.config.target_dataset}.{normalized_table_name}",
+                    bq_rows, bq_bytes = self.retryer(self.gcp.bigquery_load, extract.extract_uri, f"{self.config.target_dataset}.{normalized_table_name}",
                                                      self.config.spark.format, extract.bq_schema, "Loaded by Dumpty")
                 extract.rows_loaded = bq_rows
                 extract.bq_bytes = bq_bytes
             else:
                 # Create empty table directly
-                bigquery_create_table(
+                self.gcp.bigquery_create_table(
                     f"{self.config.target_dataset}.{normalized_table_name}", extract.bq_schema)
                 extract.rows_loaded = 0
                 extract.bq_bytes = 0
