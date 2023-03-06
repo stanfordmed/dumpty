@@ -349,19 +349,47 @@ class Pipeline:
         extract.predicates = None
 
         # Only partition tables with a PK and would generate at least two partitions when rounded up
-        partitions = round(
-            extract.rows / self.config.default_rows_per_partition) if extract.partitions is None else extract.partitions
-        if extract.rows > 0 and partitions > 1:
-            extract.partitions = partitions
-            extract.partition_column = pk.name
-            slice_width = ceil(extract.rows / extract.partitions)
+        if pk is not None and extract.rows > 0:
+            partitions = round(
+                extract.rows / self.config.default_rows_per_partition) if extract.partitions is None else extract.partitions
+            if partitions > 1:
+                extract.partitions = partitions
+                extract.partition_column = pk.name
+                slice_width = ceil(extract.rows / extract.partitions)
 
-            if is_numeric:
-                if (extract.rows == extract.max) or (extract.rows == extract.max - 1) or (abs(extract.rows - (extract.max - extract.min)) <= 1):
-                    # Numeric, sequential PK with no gaps uses default Spark column partitioning
-                    pass
+                if is_numeric:
+                    if (extract.rows == extract.max) or (extract.rows == extract.max - 1) or (abs(extract.rows - (extract.max - extract.min)) <= 1):
+                        # Numeric, sequential PK with no gaps uses default Spark column partitioning
+                        pass
+                    else:
+                        # Numeric but PK is not sequential and likely heavily skewed, julienne the table instead
+                        slices = self._julienne(table, pk, slice_width)
+                        if len(slices) < 2:
+                            logger.warning(
+                                f"Failed to Julienne {extract.name} on {pk.name}, not enough distinct PK values")
+                            extract.predicates = None
+                            extract.partition_column = None
+                            extract.partitions = 0
+                        else:
+                            i: int = 0
+                            partitions = []
+                            while i <= len(slices):
+                                if i == 0:
+                                    partitions.append(
+                                        f"{pk.name} <= {slices[i]} OR {pk.name} IS NULL ")
+                                elif i == len(slices):
+                                    partitions.append(
+                                        f"{pk.name} > {slices[i-1]}")
+                                else:
+                                    partitions.append(
+                                        f"{pk.name} > {slices[i-1]} AND {pk.name} <= {slices[i]}")
+                                i += 1
+                            extract.predicates = partitions
+                            if len(slices) < (extract.partitions / 2):
+                                logger.warning(
+                                    f"Julienne of {extract.name} on {pk.name} resulted in only {len(slices)}/{extract.partitions} expected predicates..")
                 else:
-                    # Numeric but PK is not sequential and likely heavily skewed, julienne the table instead
+                    # Non-numeric PK (varchar, datetime) so julienne the table since Spark partition_column must be numeric
                     slices = self._julienne(table, pk, slice_width)
                     if len(slices) < 2:
                         logger.warning(
@@ -371,50 +399,23 @@ class Pipeline:
                         extract.partitions = 0
                     else:
                         i: int = 0
-                        partitions = []
+                        predicates = []
                         while i <= len(slices):
                             if i == 0:
-                                partitions.append(
-                                    f"{pk.name} <= {slices[i]} OR {pk.name} IS NULL ")
+                                predicates.append(
+                                    f"{pk.name} <= '{sql_string(slices[i])}' OR {pk.name} IS NULL ")
                             elif i == len(slices):
-                                partitions.append(
-                                    f"{pk.name} > {slices[i-1]}")
+                                predicates.append(
+                                    f"{pk.name} > '{sql_string(slices[i-1])}'")
                             else:
-                                partitions.append(
-                                    f"{pk.name} > {slices[i-1]} AND {pk.name} <= {slices[i]}")
+                                predicates.append(
+                                    f"{pk.name} > '{sql_string(slices[i-1])}' AND {pk.name} <= '{sql_string(slices[i])}'")
                             i += 1
-                        extract.predicates = partitions
-                        if len(slices) < (extract.partitions / 2):
+                        # print(json.dumps(slices, indent=4))
+                        extract.predicates = predicates
+                        if len(slices) < (extract.partitions/2):
                             logger.warning(
                                 f"Julienne of {extract.name} on {pk.name} resulted in only {len(slices)}/{extract.partitions} expected predicates..")
-            else:
-                # Non-numeric PK (varchar, datetime) so julienne the table since Spark partition_column must be numeric
-                slices = self._julienne(table, pk, slice_width)
-                if len(slices) < 2:
-                    logger.warning(
-                        f"Failed to Julienne {extract.name} on {pk.name}, not enough distinct PK values")
-                    extract.predicates = None
-                    extract.partition_column = None
-                    extract.partitions = 0
-                else:
-                    i: int = 0
-                    predicates = []
-                    while i <= len(slices):
-                        if i == 0:
-                            predicates.append(
-                                f"{pk.name} <= '{sql_string(slices[i])}' OR {pk.name} IS NULL ")
-                        elif i == len(slices):
-                            predicates.append(
-                                f"{pk.name} > '{sql_string(slices[i-1])}'")
-                        else:
-                            predicates.append(
-                                f"{pk.name} > '{sql_string(slices[i-1])}' AND {pk.name} <= '{sql_string(slices[i])}'")
-                        i += 1
-                    # print(json.dumps(slices, indent=4))
-                    extract.predicates = predicates
-                    if len(slices) < (extract.partitions/2):
-                        logger.warning(
-                            f"Julienne of {extract.name} on {pk.name} resulted in only {len(slices)}/{extract.partitions} expected predicates..")
 
         # Regenerate BQ Schema if needed
         extract.bq_schema = self.bq_schema(table)
