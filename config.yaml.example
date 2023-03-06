@@ -46,6 +46,9 @@ schema: dbo
 # Your target file size for Spark output files
 target_partition_size_bytes: 52428800
 
+# First-pass introspection will use this value to determine partition size
+default_rows_per_partition: 1000000
+
 tinydb_database_file: tinydb.json
 
 # Introspection expires after this many seconds since last

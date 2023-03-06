@@ -101,6 +101,9 @@ def config_from_args(argv) -> Config:
         parser.error(
             f"Loading a dataset requires gs:// URI (uri is {config.target_uri}")
 
+    if config.target_uri is not None and config.target_uri.endswith("/"):
+        parser.error(f"target_uri cannot end with /")
+
     if config.project is not None:
         os.environ['GOOGLE_CLOUD_PROJECT'] = config.project
     if config.credentials is not None:

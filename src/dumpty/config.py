@@ -46,7 +46,7 @@ class Config(YAMLWizard):
     tinydb_database_file: str = "tinydb.json"
     reconcile: bool = False
     normalize_schema: bool = True
-    partitioning_threshold: int = 1e6
+    default_rows_per_partition: int = 1e6
     introspect_workers: int = 8
     extract_workers: int = 8
     load_workers: int = 32

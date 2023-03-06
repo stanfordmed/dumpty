@@ -14,6 +14,7 @@ from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql.functions import col
 from sqlalchemy import Column, MetaData, Table, func, inspect, literal_column
 from sqlalchemy.engine import Engine, Inspector
+from sqlalchemy.dialects.mssql import UNIQUEIDENTIFIER
 from sqlalchemy.orm import Session
 from sqlalchemy.sql import sqltypes
 from sqlalchemy.sql.sqltypes import *
@@ -24,7 +25,7 @@ from dumpty.config import Config
 from dumpty.exceptions import ExtractException, ValidationException
 from dumpty.extract import Extract
 from dumpty.gcp import GCP
-from dumpty.util import normalize_str, sql_string
+from dumpty.util import normalize_str, sql_string, count_big
 
 
 @dataclass
@@ -187,7 +188,7 @@ class Pipeline:
                 schema['type'] = "DATE"
             elif isinstance(col.type, (Float, REAL)):
                 schema['type'] = "FLOAT64"
-            elif isinstance(col.type, (String)):
+            elif isinstance(col.type, (String, UNIQUEIDENTIFIER)):
                 schema['type'] = "STRING"
             elif isinstance(col.type, (Boolean)):
                 schema['type'] = "BOOL"
@@ -245,10 +246,11 @@ class Pipeline:
             else:
                 modulo_filter = (func.mod(subquery.c.row_num, width))
             query = session\
-                .query(subquery.c.id)\
+                .query(func.distinct(subquery.c.id))\
                 .filter(modulo_filter == 0)\
                 .order_by(subquery.c.id)
-            return [r[0] for r in query.all()]
+            result = [r[0] for r in query.all()]
+            return result
 
     def introspect(self, extract: Extract) -> Extract:
         """Introspects a SQL table: row counts, min, max, and partitions
@@ -283,31 +285,57 @@ class Pipeline:
         logger.info(
             f"{'Deep' if full_introspect else 'Fast'} introspecting {extract.name}")
 
-        # Get row count (and min/max if this is a full introspection)
-        pk = table.primary_key.columns[0] if table.primary_key else None
         if self.engine.dialect.name == "mssql":
             # MSSQL COUNT(*) can overflow if > INT_MAX
-            count_fn = func.count_big(literal_column("*"))
+            count_fn = count_big
         else:
-            count_fn = func.count(literal_column("*"))
+            count_fn = func.count
+
+        if full_introspect:
+            if len(table.primary_key.columns) > 0:
+                if len(table.primary_key.columns) > 1:
+                    # If PK is composite of multiple columns, find the column with most distinct values
+                    pk_cols = [
+                        count_fn(func.distinct(col)).label(col.name) for col in table.primary_key.columns
+                    ]
+                    with Session(self.engine) as session:
+                        qry = session.query(*pk_cols).select_from(table)
+                        res = qry.one()
+                        col_distinct_counts = {c.name: res[c.name]
+                                               for c in table.primary_key.columns}
+                        # The PK we choose is the one that had the most distinct values
+                        pk = table.primary_key.columns[max(col_distinct_counts,
+                                                           key=col_distinct_counts.get)]
+                else:
+                    pk = table.primary_key.columns[0]
+                if extract.partition_column != pk.name:
+                    # Partition column has changed since last introspection, reset the partition count
+                    extract.partitions = None
+            else:
+                pk = None
+        else:
+            pk = table.primary_key.columns[extract.partition_column] if extract.partition_column is not None else None
+
         with Session(self.engine) as session:
             if pk is not None:
                 is_numeric = isinstance(pk.type, sqltypes.Numeric)
                 if is_numeric and full_introspect:
                     qry = session.query(func.max(pk).label("max"),
                                         func.min(pk).label("min"),
-                                        count_fn.label("count")).select_from(table)
+                                        count_fn(literal_column("*")).label("count")).select_from(table)
                     res = qry.one()
                     extract.max = res.max
                     extract.min = res.min
                     extract.rows = res.count
                 else:
-                    qry = session.query(count_fn.label(
-                        "count")).select_from(table)
+                    qry = session.query(count_fn(literal_column(
+                        "*")).label("count")).select_from(table)
+                    extract.max = None
+                    extract.min = None
                     extract.rows = qry.scalar()
             else:
-                # If no PK dump the entire table in a single thread
-                qry = session.query(count_fn.label("count")).select_from(table)
+                qry = session.query(count_fn(literal_column(
+                    "*")).label("count")).select_from(table)
                 extract.max = None
                 extract.min = None
                 extract.rows = qry.scalar()
@@ -316,60 +344,77 @@ class Pipeline:
             # Stop here if this table was already partitioned recently
             return extract
 
-        # Only partition tables with a PK and rows exceeding partition_row_min
-        if extract.rows >= self.config.partitioning_threshold and pk is not None:
+        # Full introspection, reset partitioning
+        extract.partition_column = None
+        extract.predicates = None
 
-            # Default to ~1M rows per partition
-            if extract.partitions is None:
-                extract.partitions = round(extract.rows / 1e6)
+        # Only partition tables with a PK and would generate at least two partitions when rounded up
+        partitions = round(
+            extract.rows / self.config.default_rows_per_partition) if extract.partitions is None else extract.partitions
+        if extract.rows > 0 and partitions > 1:
+            extract.partitions = partitions
+            extract.partition_column = pk.name
+            slice_width = ceil(extract.rows / extract.partitions)
 
-            if extract.partitions > 0:
-                slice_width = floor(extract.rows / extract.partitions)
-                if is_numeric:
-                    if (extract.rows == extract.max) or (extract.rows == extract.max - 1) or (abs(extract.rows - (extract.max - extract.min)) <= 1):
-                        # Numeric, sequential PK with no gaps uses default Spark column partitioning
-                        extract.partition_column = pk.name
-                    else:
-                        # Numeric but PK is not sequential and likely heavily skewed, julienne the table instead
-                        intervals = self._julienne(table, pk, slice_width)
-                        i: int = 0
-                        slices = []
-                        while i <= len(intervals):
-                            if i == 0:
-                                slices.append(
-                                    f"{pk.name} <= {intervals[i]} OR {pk.name} IS NULL ")
-                            elif i == len(intervals):
-                                slices.append(
-                                    f"{pk.name} > {intervals[i-1]}")
-                            else:
-                                slices.append(
-                                    f"{pk.name} > {intervals[i-1]} AND {pk.name} <= {intervals[i]}")
-                            i += 1
-                        extract.predicates = slices
+            if is_numeric:
+                if (extract.rows == extract.max) or (extract.rows == extract.max - 1) or (abs(extract.rows - (extract.max - extract.min)) <= 1):
+                    # Numeric, sequential PK with no gaps uses default Spark column partitioning
+                    pass
                 else:
-                    # Non-numeric (varchar, datetime) so julienne the table since Spark partition_column must be numeric
-                    intervals = self._julienne(table, pk, slice_width)
-                    i: int = 0
-                    slices = []
-                    while i <= len(intervals):
-                        if i == 0:
-                            slices.append(
-                                f"{pk.name} <= '{sql_string(intervals[i])}' OR {pk.name} IS NULL ")
-                        elif i == len(intervals):
-                            slices.append(
-                                f"{pk.name} > '{sql_string(intervals[i-1])}'")
-                        else:
-                            slices.append(
-                                f"{pk.name} > '{sql_string(intervals[i-1])}' AND {pk.name} <= '{sql_string(intervals[i])}'")
-                        i += 1
-                    extract.predicates = slices
+                    # Numeric but PK is not sequential and likely heavily skewed, julienne the table instead
+                    slices = self._julienne(table, pk, slice_width)
+                    if len(slices) < 2:
+                        logger.warning(
+                            f"Failed to Julienne {extract.name} on {pk.name}, not enough distinct PK values")
+                        extract.predicates = None
+                        extract.partition_column = None
+                        extract.partitions = 0
+                    else:
+                        i: int = 0
+                        partitions = []
+                        while i <= len(slices):
+                            if i == 0:
+                                partitions.append(
+                                    f"{pk.name} <= {slices[i]} OR {pk.name} IS NULL ")
+                            elif i == len(slices):
+                                partitions.append(
+                                    f"{pk.name} > {slices[i-1]}")
+                            else:
+                                partitions.append(
+                                    f"{pk.name} > {slices[i-1]} AND {pk.name} <= {slices[i]}")
+                            i += 1
+                        extract.predicates = partitions
+                        if len(slices) < (extract.partitions / 2):
+                            logger.warning(
+                                f"Julienne of {extract.name} on {pk.name} resulted in only {len(slices)}/{extract.partitions} expected predicates..")
             else:
-                # Recommendation from last run was to not split this table, remove old entries
-                extract.partition_column = None
-                extract.predicates = None
-        else:
-            extract.partitions = 0
-            extract.predicates = None
+                # Non-numeric PK (varchar, datetime) so julienne the table since Spark partition_column must be numeric
+                slices = self._julienne(table, pk, slice_width)
+                if len(slices) < 2:
+                    logger.warning(
+                        f"Failed to Julienne {extract.name} on {pk.name}, not enough distinct PK values")
+                    extract.predicates = None
+                    extract.partition_column = None
+                    extract.partitions = 0
+                else:
+                    i: int = 0
+                    predicates = []
+                    while i <= len(slices):
+                        if i == 0:
+                            predicates.append(
+                                f"{pk.name} <= '{sql_string(slices[i])}' OR {pk.name} IS NULL ")
+                        elif i == len(slices):
+                            predicates.append(
+                                f"{pk.name} > '{sql_string(slices[i-1])}'")
+                        else:
+                            predicates.append(
+                                f"{pk.name} > '{sql_string(slices[i-1])}' AND {pk.name} <= '{sql_string(slices[i])}'")
+                        i += 1
+                    # print(json.dumps(slices, indent=4))
+                    extract.predicates = predicates
+                    if len(slices) < (extract.partitions/2):
+                        logger.warning(
+                            f"Julienne of {extract.name} on {pk.name} resulted in only {len(slices)}/{extract.partitions} expected predicates..")
 
         # Regenerate BQ Schema if needed
         extract.bq_schema = self.bq_schema(table)
@@ -399,9 +444,8 @@ class Pipeline:
                 properties=self.config.jdbc.properties
             )
             logger.info(
-                f"Extracting {extract.name} as {n_table_name} ({len(extract.predicates)} slices)")
-
-        elif extract.partition_column is not None and extract.min is not None and extract.max is not None:
+                f"Extracting {extract.name} as {n_table_name} ({len(extract.predicates)} predicates)")
+        elif extract.partition_column is not None and extract.min is not None and extract.max is not None and extract.partitions > 1:
             session.sparkContext.setJobDescription(
                 f'{extract.name} (partitioned on [{extract.partition_column}] from {extract.min} to {extract.max})')
             df = session.read.jdbc(
@@ -462,16 +506,24 @@ class Pipeline:
             extract.extract_date = datetime.now()
 
             # Suggest a recommended partition size based on the actual extract size (for next run)
-            if extract.partitions > 1 and "gs://" in extract_uri:  # only resizes based on GCS targets, for now
+            # only resizes based on GCS targets, for now
+            if extract.partitions is not None and extract.partitions > 0 and "gs://" in extract_uri:
                 extract.gcs_bytes = self.retryer(
                     self.gcp.get_size_bytes, extract_uri)
-                recommendation = ceil(
+                recommendation = round(
                     extract.gcs_bytes / self.config.target_partition_size_bytes)
-                if recommendation != extract.partitions:
+                if recommendation > 1 and recommendation != extract.partitions:
                     logger.info(
                         f"Adjusted partitions on {extract.name} from {extract.partitions} to {recommendation} for next run")
                     extract.partitions = recommendation
                     extract.introspect_date = None  # triggers new introspection next run
+                else:
+                    # Do not partition this table
+                    logger.info(
+                        f"Will not partition {extract.name} for next run")
+                    extract.partition_column = None
+                    extract.predicates = None
+                    extract.partitions = None
 
         return extract
 
