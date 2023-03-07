@@ -31,6 +31,7 @@ sqlalchemy:
   url: "mssql+pyodbc://USERNAME:PASSWORD@DBHOSTNAME:PORT/DATABASE?driver=ODBC+Driver+18+for+SQL+Server&TrustServerCertificate=yes&Encrypt=yes"
   pool_size: 20
   max_overflow: 20
+  isolation_level: "READ UNCOMMITTED"
   connect_args:
     connect_timeout: 60
 jdbc:
@@ -40,6 +41,7 @@ jdbc:
     password: "PASSWORD"
     driver: "com.microsoft.sqlserver.jdbc.SQLServerDriver"
     fetchsize: "1000"
+    sessionInitStatement: "SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED"
 
 # Your target file size for Spark output files
 target_partition_size_bytes: 52428800

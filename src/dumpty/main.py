@@ -137,7 +137,7 @@ def main(args=None):
 
     # Initialize SqlAlchemy
     engine = create_engine(config.sqlalchemy.url, pool_size=config.introspect_workers, connect_args=config.sqlalchemy.connect_args,
-                           pool_pre_ping=True, max_overflow=config.introspect_workers, echo=False)
+                           pool_pre_ping=True, max_overflow=config.introspect_workers, isolation_level=config.sqlalchemy.isolation_level, echo=False)
 
     failed = False
     with ExtractDB(config.tinydb_database_file, default_table_name=config.schema) as extract_db:

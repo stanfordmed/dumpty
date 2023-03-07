@@ -8,6 +8,7 @@ from dataclass_wizard import YAMLWizard
 class SqlalchemyConfig:
     url: str
     connect_args: dict = None
+    isolation_level: str = "REPEATABLE READ"
 
 
 @dataclass
