@@ -41,8 +41,6 @@ jdbc:
     driver: "com.microsoft.sqlserver.jdbc.SQLServerDriver"
     fetchsize: "1000"
 
-schema: dbo
-
 # Your target file size for Spark output files
 target_partition_size_bytes: 52428800
 
@@ -63,3 +61,45 @@ extract_workers: 8
 
 # Controls parallelism of BigQuery load operations 
 load_workers: 8
+
+# GCS bucket URI for extrated tables
+target_uri: gs://bucket/path
+
+# project_id.dataset to create
+target_dataset: my_project_id.my_dataset_id
+
+# Access entries at dataset creation time. You will want to include the service account here!
+target_dataset_access_entries:
+  - role: "OWNER"
+    userByEmail: "etl@my_project.iam.gserviceaccount.com"
+  - role: "OWNER"
+    userByEmail: "dba@somewhere.com"
+
+# Additional access entries when dataset has completed loading
+target_dataset_additional_access_entries:
+  - role: "READER"
+    userByEmail: "reader@somewhere.com"
+
+# Labels to apply at dataset creation time
+target_dataset_pre_labels:
+  loading: true
+
+# Labels to apply when dataset has completed loading
+target_dataset_post_labels:
+  loading: false
+
+# Delete the dataset before extracting
+drop_dataset: false
+
+# Retry GCP functions that fail
+retry: false
+
+# Source database schema name
+schema: dbo
+
+# Tables to extract from above schema
+tables: 
+  - REPORTS
+  - LOGS
+
+  

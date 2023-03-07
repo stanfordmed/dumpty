@@ -145,8 +145,8 @@ def main(args=None):
 
             # Create destination dataset
             if config.target_dataset is not None:
-                retryer(pipeline.gcp.bigquery_create_dataset,
-                        dataset_ref=config.target_dataset, drop=config.drop_dataset)
+                retryer(pipeline.gcp.bigquery_create_dataset, dataset_ref=config.target_dataset, drop=config.drop_dataset, location=config.target_dataset_location,
+                        description=config.target_dataset_description, labels=config.target_dataset_pre_labels, access_entries=config.target_dataset_access_entries)
 
             if config.reconcile:
                 # Check if tables being requested actually exist in SQL database before doing anything else
@@ -182,6 +182,10 @@ def main(args=None):
                 if pipeline.error_queue.qsize() > 0:
                     pipeline.shutdown()
                     failed = True
+
+            if not failed and config.target_dataset is not None and len(config.target_dataset_post_labels) > 0:
+                retryer(pipeline.gcp.bigquery_apply_labels,
+                        dataset_ref=config.target_dataset, labels=config.target_dataset_post_labels)
 
     # Summarize
     summary['end_date'] = datetime.now()

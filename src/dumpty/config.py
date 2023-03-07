@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Dict, List
 
 from dataclass_wizard import YAMLWizard
@@ -35,6 +35,13 @@ class Config(YAMLWizard):
     tables: List[str]
     target_uri: str = None
     target_dataset: str = None
+    target_dataset_description: str = None
+    target_dataset_location: str = "US"
+    # Labels applied to the dataset at creation time, before extract
+    target_dataset_pre_labels: dict = field(default_factory=dict)
+    # Labels applied to dataset upon /successful/ extract completion
+    target_dataset_post_labels: dict = field(default_factory=dict)
+    target_dataset_access_entries: List[dict] = field(default_factory=list)
     target_partition_size_bytes: int = 52428800
     introspection_expire_s: int = 0  # 0 = no expiration
     drop_dataset: bool = False
