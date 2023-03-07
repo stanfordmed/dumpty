@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import List, Set
 
+from funcy import omit
 from tinydb import JSONStorage, Query, TinyDB
 from tinydb.middlewares import CachingMiddleware
 from tinydb_serialization import SerializationMiddleware, Serializer
@@ -18,16 +19,17 @@ class Extract:
     name: str
     min: str = None
     max: str = None
-    rows: int = 0
+    rows: int = None
     introspect_date: datetime = None
+    refresh_date: datetime = None
     partition_column: str = None
     predicates: List[str] = field(default_factory=list)
     extract_uri: str = None
     extract_date: datetime = None
     partitions: int = None
-    rows_loaded: int = 0
-    bq_bytes: int = 0
-    gcs_bytes: int = 0
+    rows_loaded: int = None
+    bq_bytes: int = None
+    gcs_bytes: int = None
     bq_schema: List[dict] = field(default_factory=list)
     warnings: List[str] = field(default_factory=list)
 
@@ -84,11 +86,12 @@ class ExtractDB:
         self._db.close()
 
     def save(self, extract: Extract):
-        """Saves an extract to the TinyDB database
+        """Saves an extract to the TinyDB database (excludes a few keys)
            :param extract: extract instance to save to TinyDB
         """
+        to_save = omit(extract.__dict__, 'bq_schema')
         with self.mutex:
-            self._db.upsert(extract.__dict__, Query().name == extract.name)
+            self._db.upsert(to_save, Query().name == extract.name)
 
     def get(self, table_name: str) -> Extract:
         """Finds an Extract in TinyDB with the name :table_name:

@@ -38,8 +38,11 @@ def config_from_args(argv) -> Config:
     parser.add_argument('--drop', action='store_true', default=None,
                         help='Drop the destination dataset before creating it')
 
-    parser.add_argument('--verbose', action='store_true', default=None,
-                        help='Enable verbose (debug) logging')
+    parser.add_argument('-d', '--debug', help="Debug logging (DEBUG)",
+                        action="store_const", dest="loglevel", const=logging.DEBUG, default=logging.WARNING)
+
+    parser.add_argument('-v', '--verbose', help="Verbose logging (INFO)",
+                        action="store_const", dest="loglevel", const=logging.INFO)
 
     parser.add_argument('--no-progress', action='store_true', dest='progress',
                         help='Do not show progress bar')
@@ -60,6 +63,7 @@ def config_from_args(argv) -> Config:
                         help='project.dataset to load extract (requires gs:// uri)')
 
     args = parser.parse_args(argv)
+    logger.setLevel(args.loglevel)
 
     # Parses YAML as a bare Jina2 template (no round-trip parsing)
     template: Template = Environment(loader=FileSystemLoader('.')).from_string(
@@ -89,10 +93,6 @@ def config_from_args(argv) -> Config:
         config.project = args.project
     if args.credentials is not None:
         config.credentials = args.credentials
-    if args.verbose is not None:
-        logger.setLevel(logging.INFO)
-    else:
-        logger.setLevel(logging.WARNING)
 
     if config.target_dataset is not None and "." not in config.target_dataset:
         parser.error("Dataset must be in format project.dataset")
@@ -100,6 +100,9 @@ def config_from_args(argv) -> Config:
     if config.target_uri is not None and "gs://" not in config.target_uri:
         parser.error(
             f"Loading a dataset requires gs:// URI (uri is {config.target_uri}")
+
+    if config.target_uri is not None and config.target_uri.endswith("/"):
+        parser.error(f"target_uri cannot end with /")
 
     if config.project is not None:
         os.environ['GOOGLE_CLOUD_PROJECT'] = config.project
@@ -187,10 +190,12 @@ def main(args=None):
 
     if config.target_dataset is not None:
         summary['consistent'] = all(x.consistent() for x in completed)
-        summary['bq_bytes'] = sum(x.bq_bytes for x in completed)
+        summary['bq_bytes'] = sum(
+            x.bq_bytes if x.bq_bytes is not None else 0 for x in completed)
 
     if config.target_uri is not None:
-        summary['gcs_bytes'] = sum(x.gcs_bytes for x in completed)
+        summary['gcs_bytes'] = sum(
+            x.gcs_bytes if x.gcs_bytes is not None else 0 for x in completed)
 
     with open(config.log_file, "w") as outfile:
         outfile.write(json.dumps(summary, indent=4, default=str))

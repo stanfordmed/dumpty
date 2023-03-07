@@ -16,6 +16,7 @@
             "module": "dumpty.main",
             "console": "integratedTerminal",
             "args": [
+                "--verbose",
                 "--config",
                 "test.yaml",
                 "--credentials",
