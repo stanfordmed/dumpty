@@ -76,6 +76,7 @@ class GCP:
                 logger.info(f"Dropping dataset {dataset_ref.dataset_id}")
                 self._bigquery_client.delete_dataset(
                     dataset_ref, not_found_ok=True, delete_contents=True)
+                dataset_ref: Dataset = Dataset(ref)
             else:
                 exists = True
         except NotFound:
@@ -121,7 +122,13 @@ class GCP:
         logger.debug(f"Updating labels on dataset {dataset_ref}")
         dataset = self._bigquery_client.update_dataset(dataset, ["labels"])
 
-    def bigquery_update_iam(self, dataset_ref: str, access_entries: List[dict]):
+    def bigquery_append_access_entries(self, dataset_ref: str, access_entries: List[dict]):
+        """Appends a list of access entries to an existing BigQuery dataset. 
+
+        Args:
+            dataset_ref (str): project_id.dataset_id reference to dataset
+            access_entries (List[dict]): List of AccessEntry objects
+        """
         ref = DatasetReference.from_string(dataset_ref)
         dataset = self._bigquery_client.get_dataset(ref)
         updated_entries = list(dataset.access_entries)
@@ -132,7 +139,7 @@ class GCP:
                 updated_entries.append(entry)
 
         dataset.access_entries = updated_entries
-        logger.debug(f"Updating access entries on dataset {dataset_ref}")
+        logger.debug(f"Appended new access entries to dataset {dataset_ref}")
         dataset = self._bigquery_client.update_dataset(
             dataset, ['access_entries'])
 

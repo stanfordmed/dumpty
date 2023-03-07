@@ -187,6 +187,10 @@ def main(args=None):
                 retryer(pipeline.gcp.bigquery_apply_labels,
                         dataset_ref=config.target_dataset, labels=config.target_dataset_post_labels)
 
+            if not failed and config.target_dataset is not None and len(config.target_dataset_additional_access_entries) > 0:
+                retryer(pipeline.gcp.bigquery_append_access_entries,
+                        dataset_ref=config.target_dataset, access_entries=config.target_dataset_additional_access_entries)
+
     # Summarize
     summary['end_date'] = datetime.now()
     summary['elapsed_s'] = round(

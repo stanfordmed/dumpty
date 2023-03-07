@@ -42,6 +42,8 @@ class Config(YAMLWizard):
     # Labels applied to dataset upon /successful/ extract completion
     target_dataset_post_labels: dict = field(default_factory=dict)
     target_dataset_access_entries: List[dict] = field(default_factory=list)
+    target_dataset_additional_access_entries: List[dict] = field(
+        default_factory=list)
     target_partition_size_bytes: int = 52428800
     introspection_expire_s: int = 0  # 0 = no expiration
     drop_dataset: bool = False
