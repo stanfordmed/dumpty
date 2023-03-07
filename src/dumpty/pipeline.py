@@ -74,24 +74,6 @@ class QueueWorker(Thread):
 
     def shutdown(self):
         self._shutdown = True
-        while not self._shutdown:
-            try:
-                extract: Extract = self.step.in_queue.get(timeout=1)
-                try:
-                    self.busy = True
-                    self.step.out_queue.put(self.step.func(extract))
-                except Exception as ex:
-                    try:
-                        raise ExtractException(extract) from ex
-                    except ExtractException as ex:
-                        logger.error(ex)
-                        traceback.print_exc()
-                        self.step.error_queue.put(ex)
-                finally:
-                    self.busy = False
-                    self.step.in_queue.task_done()
-            except Empty:
-                pass
 
 
 class QueueWorkerPool():
