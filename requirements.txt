@@ -14,3 +14,4 @@ tenacity>=8.1.0
 tinydb>=4.7.1
 pyodbc>=4.0.35
 tinydb-serialization>=2.1.0
+funcy>=1.18

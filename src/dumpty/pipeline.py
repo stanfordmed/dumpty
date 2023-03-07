@@ -93,9 +93,6 @@ class QueueWorker(Thread):
             except Empty:
                 pass
 
-    def shutdown(self):
-        self._shutdown = True
-
 
 class QueueWorkerPool():
     def __init__(self, step: Step, size: int):
@@ -106,10 +103,6 @@ class QueueWorkerPool():
 
     def busy_count(self):
         return sum(worker.busy for worker in self.workers)
-
-    def shutdown(self):
-        for worker in self.workers:
-            worker.shutdown()
 
     def shutdown(self):
         for worker in self.workers:
