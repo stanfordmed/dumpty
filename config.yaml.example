@@ -75,7 +75,7 @@ target_dataset_access_entries:
   - role: "OWNER"
     userByEmail: "dba@somewhere.com"
 
-# Additional access entries when dataset has completed loading
+# Additional access entries to grant when dataset has completed loading
 target_dataset_additional_access_entries:
   - role: "READER"
     userByEmail: "reader@somewhere.com"
