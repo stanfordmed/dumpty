@@ -1,3 +1,4 @@
+import json
 import os
 import re
 from pathlib import PurePath
@@ -5,7 +6,7 @@ from typing import List
 from urllib.parse import urlparse
 
 from google.cloud.bigquery import Client as BigqueryClient
-from google.cloud.bigquery import (CreateDisposition, Dataset,
+from google.cloud.bigquery import (CreateDisposition, Dataset, AccessEntry,
                                    DatasetReference, LoadJobConfig, TableReference, Table,
                                    SchemaField, SourceFormat, WriteDisposition)
 from google.cloud.exceptions import NotFound
@@ -62,7 +63,7 @@ class GCP:
         blob: Blob = bucket.blob(name)
         blob.upload_from_string(data=data, content_type=content_type)
 
-    def bigquery_create_dataset(self, dataset_ref: str, description: str = None, location: str = "US", labels: dict = {}, drop: bool = False) -> Dataset:
+    def bigquery_create_dataset(self, dataset_ref: str, description: str = None, location: str = "US", labels: dict = {}, access_entries: List[dict] = None, drop: bool = False) -> Dataset:
         """
         Creates a Dataset in BigQuery
         """
@@ -75,16 +76,30 @@ class GCP:
                 logger.info(f"Dropping dataset {dataset_ref.dataset_id}")
                 self._bigquery_client.delete_dataset(
                     dataset_ref, not_found_ok=True, delete_contents=True)
+                dataset_ref: Dataset = Dataset(ref)
             else:
                 exists = True
         except NotFound:
             dataset_ref: Dataset = Dataset(ref)
+
         dataset_ref.description = description
         dataset_ref.location = location
         dataset_ref.labels = labels
+
+        if access_entries is not None:
+            updated_entries = list(
+                dataset_ref.access_entries) if dataset_ref.access_entries is not None else []
+            for entry in access_entries:
+                entry = AccessEntry.from_api_repr(entry)
+                if entry not in dataset_ref.access_entries:
+                    updated_entries.append(entry)
+            dataset_ref.access_entries = updated_entries
+
         if exists:
             logger.debug(
                 f"Dataset {dataset_ref.dataset_id} already exists, updating")
+            if access_entries is not None:
+                return self._bigquery_client.update_dataset(dataset_ref, fields=["description", "location", "labels", "access_entries"])
             return self._bigquery_client.update_dataset(dataset_ref, fields=["description", "location", "labels"])
         else:
             return self._bigquery_client.create_dataset(dataset_ref)
@@ -99,6 +114,34 @@ class GCP:
         logger.info(
             f"Creating empty table {table_ref.dataset_id}.{table_ref.table_id}")
         return self._bigquery_client.create_table(table_ref, exists_ok=True)
+
+    def bigquery_apply_labels(self, dataset_ref: str, labels: dict):
+        ref = DatasetReference.from_string(dataset_ref)
+        dataset = self._bigquery_client.get_dataset(ref)
+        dataset.labels = labels
+        logger.debug(f"Updating labels on dataset {dataset_ref}")
+        dataset = self._bigquery_client.update_dataset(dataset, ["labels"])
+
+    def bigquery_append_access_entries(self, dataset_ref: str, access_entries: List[dict]):
+        """Appends a list of access entries to an existing BigQuery dataset. 
+
+        Args:
+            dataset_ref (str): project_id.dataset_id reference to dataset
+            access_entries (List[dict]): List of AccessEntry objects
+        """
+        ref = DatasetReference.from_string(dataset_ref)
+        dataset = self._bigquery_client.get_dataset(ref)
+        updated_entries = list(dataset.access_entries)
+
+        for entry in access_entries:
+            entry = AccessEntry.from_api_repr(entry)
+            if entry not in dataset.access_entries:
+                updated_entries.append(entry)
+
+        dataset.access_entries = updated_entries
+        logger.debug(f"Appended new access entries to dataset {dataset_ref}")
+        dataset = self._bigquery_client.update_dataset(
+            dataset, ['access_entries'])
 
     def bigquery_load(self, uri: str, table: str, format: str, schema: List[dict], description: str = None, location="US"):
         """

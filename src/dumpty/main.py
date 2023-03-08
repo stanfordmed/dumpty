@@ -137,7 +137,7 @@ def main(args=None):
 
     # Initialize SqlAlchemy
     engine = create_engine(config.sqlalchemy.url, pool_size=config.introspect_workers, connect_args=config.sqlalchemy.connect_args,
-                           pool_pre_ping=True, max_overflow=config.introspect_workers, echo=False)
+                           pool_pre_ping=True, max_overflow=config.introspect_workers, isolation_level=config.sqlalchemy.isolation_level, echo=False)
 
     failed = False
     with ExtractDB(config.tinydb_database_file, default_table_name=config.schema) as extract_db:
@@ -145,8 +145,8 @@ def main(args=None):
 
             # Create destination dataset
             if config.target_dataset is not None:
-                retryer(pipeline.gcp.bigquery_create_dataset,
-                        dataset_ref=config.target_dataset, drop=config.drop_dataset)
+                retryer(pipeline.gcp.bigquery_create_dataset, dataset_ref=config.target_dataset, drop=config.drop_dataset, location=config.target_dataset_location,
+                        description=config.target_dataset_description, labels=config.target_dataset_pre_labels, access_entries=config.target_dataset_access_entries)
 
             if config.reconcile:
                 # Check if tables being requested actually exist in SQL database before doing anything else
@@ -182,6 +182,14 @@ def main(args=None):
                 if pipeline.error_queue.qsize() > 0:
                     pipeline.shutdown()
                     failed = True
+
+            if not failed and config.target_dataset is not None and len(config.target_dataset_post_labels) > 0:
+                retryer(pipeline.gcp.bigquery_apply_labels,
+                        dataset_ref=config.target_dataset, labels=config.target_dataset_post_labels)
+
+            if not failed and config.target_dataset is not None and len(config.target_dataset_additional_access_entries) > 0:
+                retryer(pipeline.gcp.bigquery_append_access_entries,
+                        dataset_ref=config.target_dataset, access_entries=config.target_dataset_additional_access_entries)
 
     # Summarize
     summary['end_date'] = datetime.now()
