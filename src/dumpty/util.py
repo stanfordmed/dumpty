@@ -22,15 +22,6 @@ def filter_shuffle(seq):
         return seq
 
 
-def sql_string(value):
-    """Some Python types cast to String values that break SQL when cast to varchar.
-    For example datetime includes 6-digit microseconds which breaks MSSQL.
-    """
-    if isinstance(value, (datetime.datetime)):
-        return value.strftime("%Y-%m-%d %H:%M:%S")
-    return value
-
-
 class count_big(GenericFunction):
     r"""The MSSQL count_big aggregate function.  With no arguments,
     emits COUNT \*.
