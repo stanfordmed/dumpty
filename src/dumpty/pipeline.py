@@ -1,8 +1,7 @@
-import json
 import traceback
 from dataclasses import dataclass
 from datetime import datetime
-from math import ceil, floor
+from math import ceil
 from queue import Empty, Queue
 from random import uniform
 from threading import Thread
@@ -18,6 +17,7 @@ from sqlalchemy.dialects.mssql import UNIQUEIDENTIFIER
 from sqlalchemy.orm import Session
 from sqlalchemy.sql import sqltypes
 from sqlalchemy.sql.sqltypes import *
+from sqlalchemy.sql.expression import cast
 from tenacity import Retrying
 
 from dumpty import logger
@@ -25,7 +25,7 @@ from dumpty.config import Config
 from dumpty.exceptions import ExtractException, ValidationException
 from dumpty.extract import Extract
 from dumpty.gcp import GCP
-from dumpty.util import normalize_str, sql_string, count_big
+from dumpty.util import normalize_str, count_big
 
 
 @dataclass
@@ -235,6 +235,7 @@ class Pipeline:
     def _julienne(self, table: Table, column: Column, width: int):
         logger.debug(
             f"Julienning {table.name} on {column.name} into {width}-row slices")
+
         with Session(self.engine) as session:
             subquery = session\
                 .query(column.label('id'),
@@ -245,10 +246,22 @@ class Pipeline:
                 modulo_filter = (subquery.c.row_num % width)
             else:
                 modulo_filter = (func.mod(subquery.c.row_num, width))
-            query = session\
-                .query(func.distinct(subquery.c.id))\
-                .filter(modulo_filter == 0)\
-                .order_by(subquery.c.id)
+
+            # Spark predicates can't use parameterized queries, so we can't use native Python types
+            # and let python/jdbc handle type conversion. So we cast to a String (VARCHAR) here
+            # for anything non-numeric (eg. datetime.datetime) and hope that tranlates
+            # properly in the other direction, in the spark predicate where clause..
+            if isinstance(column.type, sqltypes.Numeric):
+                query = session\
+                    .query(func.distinct(subquery.c.id), subquery.c.row_num)\
+                    .filter(modulo_filter == 0)\
+                    .order_by(subquery.c.row_num)
+            else:
+                query = session\
+                    .query(func.distinct(cast(subquery.c.id, String)), subquery.c.row_num)\
+                    .filter(modulo_filter == 0)\
+                    .order_by(subquery.c.row_num)
+
             result = [r[0] for r in query.all()]
             return result
 
@@ -326,8 +339,6 @@ class Pipeline:
                 qry = session.query(
                     count_fn(literal_column("*")).label("count")
                 ).select_from(table)
-                extract.max = None
-                extract.min = None
                 extract.rows = qry.scalar()
 
         if not full_introspect:
@@ -352,7 +363,6 @@ class Pipeline:
                     # Numeric, sequential PK with no gaps uses default Spark column partitioning
                     logger.info(
                         f"{extract.name} using Spark partitioning on {pk.name} ({partitions} partitions)")
-                    pass
                 else:
                     # Non-numeric, or PK is not sequential and likely heavily skewed, julienne the table instead
                     slices = self._julienne(table, pk, slice_width)
@@ -377,7 +387,7 @@ class Pipeline:
                                     f"{pk.name} > {quote_char}{slices[i-1]}{quote_char} AND {pk.name} <= {quote_char}{slices[i]}{quote_char}")
                         extract.predicates = predicates
                         logger.info(
-                            f"{extract.name} using predicate partitioning on {pk.name} ({partitions} partitions)")
+                            f"{extract.name} using predicate partitioning on {pk.name} ({partitions} predicates)")
 
         now = datetime.now()
         extract.introspect_date = now
