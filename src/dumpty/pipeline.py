@@ -339,8 +339,6 @@ class Pipeline:
                 qry = session.query(
                     count_fn(literal_column("*")).label("count")
                 ).select_from(table)
-                extract.max = None
-                extract.min = None
                 extract.rows = qry.scalar()
 
         if not full_introspect:
