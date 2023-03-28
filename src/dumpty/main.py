@@ -10,16 +10,18 @@ from typing import List
 
 import psutil
 from alive_progress import alive_bar
-from jinja2 import Environment, FileSystemLoader, Template
-from sqlalchemy import create_engine
-from tenacity import (Retrying, after_log, stop_after_attempt,
-                      stop_after_delay, wait_random_exponential)
-
-from dumpty import logger
 from dumpty.config import Config
 from dumpty.extract import Extract, ExtractDB
 from dumpty.pipeline import Pipeline
 from dumpty.util import filter_shuffle
+from google.api_core.exceptions import BadRequest
+from jinja2 import Environment, FileSystemLoader, Template
+from sqlalchemy import create_engine
+from tenacity import (Retrying, after_log, retry_if_not_exception_type,
+                      stop_after_attempt, stop_after_delay,
+                      wait_random_exponential)
+
+from dumpty import logger
 
 
 def config_from_args(argv) -> Config:
@@ -119,7 +121,8 @@ def main(args=None):
     # Default retry for network operations: 2^x * 1 second between each retry, starting with 5s, up to 30s, die after 30 minutes of retries
     # reraise=True places the exception at the END of the stack-trace dump
     retryer = Retrying(wait=wait_random_exponential(multiplier=1, min=5, max=30), after=after_log(logger, logging.WARNING),
-                       stop=(stop_after_delay(1800) | stop_after_attempt(0 if not config.retry else 999)), reraise=True)
+                       stop=(stop_after_delay(1800) | stop_after_attempt(0 if not config.retry else 999)), reraise=True,
+                       retry=retry_if_not_exception_type(BadRequest))
 
     # Create spark logdir if needed
     spark_log_dir = config.spark.properties.get('spark.eventLog.dir')
