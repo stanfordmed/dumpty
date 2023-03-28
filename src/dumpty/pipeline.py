@@ -1,3 +1,4 @@
+import json
 import traceback
 from dataclasses import dataclass
 from datetime import datetime
@@ -502,6 +503,15 @@ class Pipeline:
                             f"Adjusted partitions on {extract.name} from {extract.partitions} to {recommendation} for next run")
                         extract.partitions = recommendation
                         extract.introspect_date = None  # triggers new introspection next run
+
+            # Save schema as JSON
+            json_schema = json.dumps(extract.bq_schema, indent=4)
+            if "gs://" not in self.config.target_uri:
+                with open(f"{self.config.target_uri}/{normalize_str(extract.name)}/schema.json", "wt") as f:
+                    f.write(json_schema)
+            else:
+                self.retryer(self.gcp.upload_from_string, json_schema,
+                             f"{self.config.target_uri}/{normalize_str(extract.name)}/schema.json")
 
         return extract
 
