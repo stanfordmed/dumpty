@@ -249,8 +249,8 @@ class Pipeline:
 
             # Spark predicates can't use parameterized queries, so we can't use native Python types
             # and let python/jdbc handle type conversion. So we cast to a String (VARCHAR) here
-            # for anything non-numeric (eg. datetime.datetime) and hope that tranlates
-            # properly in the other direction, in the spark predicate where clause..
+            # for anything non-numeric (eg. datetime.datetime) and hope that translates
+            # properly in the other direction, in the Spark predicate where clause..
             if isinstance(column.type, sqltypes.Numeric):
                 query = session\
                     .query(func.distinct(subquery.c.id), subquery.c.row_num)\
