@@ -70,7 +70,7 @@ def config_from_args(argv) -> Config:
         Path(args.config).read_text())
 
     template.environment.filters['shuffle'] = filter_shuffle
-    parsed = template.render()
+    parsed = template.render(env=os.environ)
     if args.parse:
         print(parsed)
         sys.exit()
