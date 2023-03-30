@@ -555,9 +555,9 @@ class Pipeline:
             :raises: :class:`.ValidationException` when a table is not found. Use this
             to fail early if you are not sure if the tables are actually in the SQL database.
         """
-        logger.info(f"Enumerating tables in schema {self.config.schema}")
+        logger.info(f"Reconciling list of tables against schema {self.config.schema}")
         sql_tables = self._inspector.get_table_names(schema=self.config.schema)
-        not_found = [t for t in table_names if t not in sql_tables]
+        not_found = [t for t in table_names if t.lower() not in (table.lower() for table in sql_tables)]
         if len(not_found) > 0:
             raise ValidationException(
                 f"Could not find these tables in {self.config.schema}: {','.join(not_found)}")
