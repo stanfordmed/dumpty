@@ -65,7 +65,7 @@ A simple database (`tinydb.json`) contains the introspection data. Deleting this
 
 Dumpty uses Jinja-templated YAML configuration files. This allows breaking up the configuration file into multiple files, which can all import shared configuration.
 
-The following is an example database.yaml configuration file, which imports a common [config.yaml](config.yaml.example) that contains Spark and database configuration. The template uses Jinja formatting and environment variables are available: 
+The following is an example database.yaml configuration file, which imports a common config.yaml which contains Spark and database configuration. The template uses Jinja formatting and environment variables are available: 
 
 ```yaml
 {% include "config.yaml" %}
