@@ -14,7 +14,7 @@ This utility was created from a need to dump large (> 10 TB) on-premise relation
 
 When executed, Dumpty will create a "local" (in-memory) Apache Spark server. With a provided configuration and list of tables, it will launch Spark jobs to extract the SQL as compressed JSON streamed directly to a GCS bucket and loaded into BigQuery (if desired). JSON is the only format "officially" supported by this utility as it is the only format which supports the DATETIME type natively in BigQuery.
 
-Again, you are creating a Spark cluster __in memory__, so a host with at least 32 CPU and 32GB of RAM is recommended for large databases. It has been tested against MSSQL Server and Oracle. This program can place heavy load on the target database, so ask your DBA/admin for permission first.
+Again, you are creating a Spark cluster __in memory__, so a host with at least 32 CPU and 32GB of RAM is recommended for large databases. It has been tested against MSSQL Server only, Oracle support is planned. This program can place heavy load on the target database, so ask your DBA/admin for permission first.
 
 ## Features
 
@@ -56,7 +56,8 @@ A simple database (`tinydb.json`) contains the introspection data. Deleting this
   - `pip install build`
   - `python -m build` 
   - Copy `dist/dumpty-0.1.0.tar.gz` to your remote server and install with `pip install dumpty-0.1.0.tar.gz`
-- You will need to download Spark JAR files (not included here) for your database and GCP platform (see `spark.driver.extraClassPath` below)
+- You will need to download Spark JAR files (not included here) for your database and GCP platform (see `spark.driver.extraClassPath` in [config.yaml.example](config.yaml.example))
+- Java 11+ is recommended for performance reasons
 
 ## Usage
 
@@ -64,10 +65,16 @@ A simple database (`tinydb.json`) contains the introspection data. Deleting this
 
 Dumpty uses Jinja-templated YAML configuration files. This allows breaking up the configuration file into multiple files, which can all import shared configuration.
 
-The following is an example `database.yaml` configuration file, which imports a common `config.yaml` that contains Spark and database configuration:
+The following is an example database.yaml configuration file, which imports a common [config.yaml](config.yaml.example) that contains Spark and database configuration. The template uses Jinja formatting and environment variables are available: 
 
 ```yaml
 {% include "config.yaml" %}
+{%- set THREADS = env['THREADS'] %}
+spark:
+  threads: {{THREADS}}
+  format: "json"
+  compression: "gzip"
+  normalize_schema: "true"
 project: my-gcp-project
 credentials: /path/to/gcp/credentials.json
 target_uri: gs://my_bucket/database_name
@@ -81,65 +88,7 @@ tables:
   - AUDIT
 ```
 
-Example `config.yaml` file for dumping an Oracle database, using an extract host with 64 CPUs and 32 GB RAM. Note the `spark.driver.extraClassPath` which contains the Oracle JDBC driver and GCS/GCP connector JAR files.
-```yaml
-spark: 
-  threads: 64
-  format: "json"
-  compression: "gzip"
-  normalize_schema: "true"
-  timestamp_format: "yyyy-MM-dd HH:mm:ss"
-  properties:
-    # These next 4 are very important to avoid GC slowdown/crashes
-    spark.executor.memory: "8g"
-    spark.driver.memory: "24g"
-    spark.executor.defaultJavaOptions: "-XX:+UseG1GC"
-    spark.driver.defaultJavaOptions: "-XX:+UseG1GC"
-    spark.ui.showConsoleProgress: "false"
-    spark.default.parallelism: "64"
-    spark.eventLog.enabled: "true"
-    spark.eventLog.dir: "spark_log"
-    spark.task.maxFailures: "20"
-    spark.hadoop.fs.gs.http.max.retry: "20"
-    spark.driver.extraClassPath: "ojdbc8.jar:gcs-connector-hadoop3-2.2.11-shaded.jar:spark-3.1-bigquery-0.28.0-preview.jar"
-    spark.sql.session.timeZone: "America/Los_Angeles"
-    spark.sql.jsonGenerator.ignoreNullFields": "false"
-    spark.sql.debug.maxToStringFields: "25"
-    spark.hadoop.google.cloud.auth.service.account.enable: "true"
-    spark.hadoop.google.cloud.auth.service.account.json.keyfile: "/path/to/key.json"
-    spark.hadoop.mapreduce.fileoutputcommitter.algorithm.version: "2"
-    spark.sql.debug.maxToStringFields: "500"
-sqlalchemy:
-  url: "oracle+cx_oracle://username:password@server:1521/?service_name=MYSERVICE"
-  pool_size: 20
-  max_overflow: 20
-  connect_args: {}
-jdbc:
-  url: "jdbc:oracle:thin:@//server:1521/MYSERVICE"
-  properties:
-    user: username
-    password: "password"
-    driver: "oracle.jdbc.driver.OracleDriver"
-    fetchsize: "2000"
-
-# Your target file size for Spark output files
-target_partition_size_bytes: 52428800
-
-tinydb_database_file: tinydb.json
-
-# Introspection expires after this many seconds since last
-introspection_expire_s: 604800
-
-# Controls parallelism of SQL introspection workers (one SQL connection per worker)
-# note: introspect_workers + spark.threads = total parallel SQL queries
-introspect_workers: 8
-
-# No more than this number of Spark jobs will be in 'running' state.
-extract_workers: 8
-
-# Controls parallelism of BigQuery load operations 
-load_workers: 8
-```
+For a complete example, see [config.yaml.example](config.yaml.example)
 
 # Misc notes:
 ## Mac M1 development
