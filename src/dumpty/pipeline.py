@@ -1,3 +1,4 @@
+import json
 import traceback
 from dataclasses import dataclass
 from datetime import datetime
@@ -249,8 +250,8 @@ class Pipeline:
 
             # Spark predicates can't use parameterized queries, so we can't use native Python types
             # and let python/jdbc handle type conversion. So we cast to a String (VARCHAR) here
-            # for anything non-numeric (eg. datetime.datetime) and hope that tranlates
-            # properly in the other direction, in the spark predicate where clause..
+            # for anything non-numeric (eg. datetime.datetime) and hope that translates
+            # properly in the other direction, in the Spark predicate where clause..
             if isinstance(column.type, sqltypes.Numeric):
                 query = session\
                     .query(func.distinct(subquery.c.id), subquery.c.row_num)\
@@ -503,6 +504,15 @@ class Pipeline:
                         extract.partitions = recommendation
                         extract.introspect_date = None  # triggers new introspection next run
 
+            # Save schema as JSON
+            json_schema = json.dumps(extract.bq_schema, indent=4)
+            if "gs://" not in self.config.target_uri:
+                with open(f"{self.config.target_uri}/{normalize_str(extract.name)}/schema.json", "wt") as f:
+                    f.write(json_schema)
+            else:
+                self.retryer(self.gcp.upload_from_string, json_schema,
+                             f"{self.config.target_uri}/{normalize_str(extract.name)}/schema.json")
+
         return extract
 
     def load(self, extract: Extract) -> Extract:
@@ -545,9 +555,9 @@ class Pipeline:
             :raises: :class:`.ValidationException` when a table is not found. Use this
             to fail early if you are not sure if the tables are actually in the SQL database.
         """
-        logger.info(f"Enumerating tables in schema {self.config.schema}")
+        logger.info(f"Reconciling list of tables against schema {self.config.schema}")
         sql_tables = self._inspector.get_table_names(schema=self.config.schema)
-        not_found = [t for t in table_names if t not in sql_tables]
+        not_found = [t for t in table_names if t.lower() not in (table.lower() for table in sql_tables)]
         if len(not_found) > 0:
             raise ValidationException(
                 f"Could not find these tables in {self.config.schema}: {','.join(not_found)}")
