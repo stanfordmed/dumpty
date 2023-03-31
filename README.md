@@ -144,14 +144,11 @@ load_workers: 8
 # Misc notes:
 ## Mac M1 development
 
-Getting this working natively on M1 Mac with Python and PyODBC is a bit of a challenge. Note you may not even __need__ PyODBC (for example, Oracle uses [cx_Oracle](https://oracle.github.io/python-cx_Oracle/))
+Getting this working natively on M1 Mac with Python and PyODBC is a bit of a challenge. Note you may not even __need__ PyODBC (for example, Oracle uses [cx_Oracle](https://oracle.github.io/python-cx_Oracle/)). 
 
 In short you want to make sure your PyODBC does __not__ link to iodbc:
 - `otool -L $(python3 -c "import importlib.machinery; print(importlib.machinery.PathFinder().find_spec('pyodbc').origin)")`
   - Make sure iodbc is not mentioned in the output
-
-## Security note
-This application uses dynamically generated SQL, as the schema, table, and column names are programmatically generated. As such, it assumes the configuration files are from a trustworthy source. If the configuration files are generated upstream, for example from a user-driven application, it is your responsibility to ensure that the configuration files do not contain malicious SQL.
 
 ## Installation 
 
@@ -173,6 +170,3 @@ bash$ export CFLAGS="-I/opt/homebrew/Cellar/openssl@1.1/1.1.1o/include/openssl"
 pyenv install 3.9.11
 pip install pyodbc-4.0.35.tar.gz
 ```
- 
-
-
