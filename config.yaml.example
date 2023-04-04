@@ -18,7 +18,14 @@ spark:
     #spark.dynamicAllocation.maxExecutors: "4"
     spark.hadoop.google.cloud.auth.service.account.enable: "true"
     spark.hadoop.google.cloud.auth.service.account.json.keyfile: "key.json"
-    spark.hadoop.mapreduce.fileoutputcommitter.algorithm.version: "2"
+    # NOTE: Below require Hadoop 3.3.5+ jars
+    # https://hadoop.apache.org/docs/r3.3.5/hadoop-mapreduce-client/hadoop-mapreduce-client-core/manifest_committer.html
+    # v1 committer is very slow, v2 is not safe for GCS. This one is supposed to be safe.
+    spark.hadoop.mapreduce.outputcommitter.factory.scheme.gcs: "org.apache.hadoop.mapreduce.lib.output.committer.manifest.ManifestCommitterFactory"
+    spark.hadoop.mapreduce.outputcommitter.factory.scheme.gs: "org.apache.hadoop.mapreduce.lib.output.committer.manifest.ManifestCommitterFactory"
+    spark.hadoop.mapreduce.manifest.committer.delete.target.files: "true"
+    spark.sql.parquet.output.committer.class: "org.apache.spark.internal.io.cloud.BindingParquetOutputCommitter"
+    spark.sql.sources.commitProtocolClass: "org.apache.spark.internal.io.cloud.PathOutputCommitProtocol"
     spark.executor.memory: "8g"
     spark.driver.memory: "16g"
     # Change to G1GC prevents GC slowdowns entirely
@@ -102,5 +109,3 @@ schema: dbo
 tables: 
   - REPORTS
   - LOGS
-
-  
