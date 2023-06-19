@@ -1,0 +1,28 @@
+{
+    "version": "0.1.0",
+    "configurations": [
+        {
+            "name": "Python: Current File",
+            "type": "python",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal",
+            "justMyCode": true
+        },
+        {
+            "name": "Test",
+            "type": "python",
+            "request": "launch",
+            "module": "dumpty.main",
+            "console": "integratedTerminal",
+            "args": [
+                "--verbose",
+                "--config",
+                "test.yaml",
+                "--credentials",
+                "credentials.json"
+            ],
+            "justMyCode": true
+        }
+    ]
+}

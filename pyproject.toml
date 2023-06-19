@@ -1,0 +1,111 @@
+[project]
+name = "dumpty"  # Required
+version = "0.1.0"  # Required
+description = "Incremental backup utility for a popular reporting database"
+readme = "README.md"
+requires-python = ">=3.9"
+license = {file = "LICENSE"}
+keywords = ["database"]
+authors = [
+  {name = "Joseph Mesterhazy", email = "jmesterh@gmail.com" }
+]
+maintainers = [
+  {name = "RT OSS Admin", email = "rit-oss-admin@stanford.edu" }
+]
+classifiers = [  
+  # How mature is this project? Common values are
+  #   3 - Alpha
+  #   4 - Beta
+  #   5 - Production/Stable
+  "Development Status :: 3 - Alpha",
+
+  # Indicate who your project is intended for
+  "Intended Audience :: Healthcare Industry",
+  "Topic :: Database",
+
+  # Pick your license as you wish
+  "License :: OSI Approved :: Apache Software License",
+
+  # Specify the Python versions you support here. In particular, ensure
+  # that you indicate you support Python 3. These classifiers are *not*
+  # checked by "pip install". See instead "python_requires" below.
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3 :: Only",
+]
+
+# This field lists other packages that your project depends on to run.
+# Any package you put here will be installed by pip when your project is
+# installed, so they must be valid existing projects.
+#
+# For an analysis of this field vs pip's requirements files see:
+# https://packaging.python.org/discussions/install-requires-vs-requirements/
+dependencies = [ 
+  "PyYAML>=6.0",
+  "pyaml>=21.10.1",
+  "pyspark>=3.3.2",
+  "tomli>=2.0.1",
+  "Jinja2>=3.1.2",
+  "dataclass-wizard>=0.22.2",
+  "google-cloud-bigquery>=3.4.2",
+  "SQLAlchemy!=1.4.33,<2.0,>=1.4.20",
+  "pysparkextra>=0.4.2",
+  "alive-progress>=3.0.1",
+  "psutil>=5.9.4",
+  "tenacity>=8.1.0",
+  "google-cloud-storage>=2.7.0",
+  "tinydb-serialization>=2.1.0",
+  "pyodbc>=4.0.35",
+  "funcy>=1.18"
+]
+
+
+# List additional groups of dependencies here (e.g. development
+# dependencies). Users will be able to install these using the "extras"
+# syntax, for example:
+#
+#   $ pip install sampleproject[dev]
+#
+# Similar to `dependencies` above, these must be valid existing
+# projects.
+[project.optional-dependencies] # Optional
+dev = ["check-manifest"]
+test = ["coverage"]
+
+# List URLs that are relevant to your project
+#
+# This field corresponds to the "Project-URL" and "Home-Page" metadata fields:
+# https://packaging.python.org/specifications/core-metadata/#project-url-multiple-use
+# https://packaging.python.org/specifications/core-metadata/#home-page-optional
+#
+# Examples listed include a pattern for specifying where the package tracks
+# issues, where the source is hosted, where to say thanks to the package
+# maintainers, and where to support the project financially. The key is
+# what's used to render the link text on PyPI.
+[project.urls]  # Optional
+"Homepage" = "https://github.com/pypa/sampleproject"
+"Bug Reports" = "https://github.com/pypa/sampleproject/issues"
+"Funding" = "https://donate.pypi.org"
+"Say Thanks!" = "http://saythanks.io/to/example"
+"Source" = "https://github.com/pypa/sampleproject/"
+
+# The following would provide a command line executable called `sample`
+# which executes the function `main` from this package when invoked.
+[project.scripts]  # Optional
+dumpty = "dumpty.main:main"
+
+# This is configuration specific to the `setuptools` build backend.
+# If you are using a different build backend, you will need to change this.
+[tool.setuptools]
+# If there are data files included in your packages that need to be
+# installed, specify them here.
+#package-data = {"dumpty" = ["*.jar"]}
+#include-package-data = true
+
+[build-system]
+# These are the assumed default build requirements from pip:
+# https://pip.pypa.io/en/stable/reference/pip/#pep-517-and-518-support
+requires = ["setuptools>=43.0.0", "wheel", "build"]
+build-backend = "setuptools.build_meta"

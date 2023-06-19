@@ -1,0 +1,13 @@
+{
+    "files.exclude": {
+        "**/*.egg-info": true,
+        "**/build": true,
+        "**/__pycache__": true
+    },
+    "editor.formatOnSave": true,
+    "files.associations": {
+        "*.yaml": "jinja-yaml",
+        "macros.j2": "jinja"
+    },
+    "dbt.queryLimit": 500,
+}
