@@ -478,14 +478,14 @@ class Pipeline:
             # Nothing to do here
             return extract
 
-        if self.config.target_uri is not None:
+        if self.config.target_uri is not None and extract.rows == 0:
             extract_uri = self._extract(extract, self.config.target_uri)
             extract.extract_uri = extract_uri
             extract.extract_date = datetime.now()
 
             # Suggest a recommended partition size based on the actual extract size (for next run)
             # only resizes based on GCS targets, for now
-            if extract.partitions is not None and extract.partitions > 0 and "gs://" in extract_uri:
+            if extract.partitions is not None and extract.partitions > 0 and "gs://" in extract_uri and extract.rows > 0:
                 extract.gcs_bytes = self.retryer(
                     self.gcp.get_size_bytes, extract_uri)
                 if extract.gcs_bytes < self.config.target_partition_size_bytes:
