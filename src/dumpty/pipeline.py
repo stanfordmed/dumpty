@@ -475,17 +475,18 @@ class Pipeline:
         extract.extract_uri = None
 
         if extract.rows == 0:
-            # Nothing to do here
+            # save only the schema if table is empty
+            self._save_schema(extract, self.config.target_uri, self.gcp.upload_from_string)
             return extract
 
-        if self.config.target_uri is not None and extract.rows == 0:
+        if self.config.target_uri is not None:
             extract_uri = self._extract(extract, self.config.target_uri)
             extract.extract_uri = extract_uri
             extract.extract_date = datetime.now()
 
             # Suggest a recommended partition size based on the actual extract size (for next run)
             # only resizes based on GCS targets, for now
-            if extract.partitions is not None and extract.partitions > 0 and "gs://" in extract_uri and extract.rows > 0:
+            if extract.partitions is not None and extract.partitions > 0 and "gs://" in extract_uri:
                 extract.gcs_bytes = self.retryer(
                     self.gcp.get_size_bytes, extract_uri)
                 if extract.gcs_bytes < self.config.target_partition_size_bytes:
@@ -504,16 +505,18 @@ class Pipeline:
                         extract.partitions = recommendation
                         extract.introspect_date = None  # triggers new introspection next run
 
-            # Save schema as JSON
-            json_schema = json.dumps(extract.bq_schema, indent=4)
-            if "gs://" not in self.config.target_uri:
-                with open(f"{self.config.target_uri}/{normalize_str(extract.name)}/schema.json", "wt") as f:
-                    f.write(json_schema)
-            else:
-                self.retryer(self.gcp.upload_from_string, json_schema,
-                             f"{self.config.target_uri}/{normalize_str(extract.name)}/schema.json")
-
+        self._save_schema(extract, self.config.target_uri, self.gcp.upload_from_string)
         return extract
+
+    def _save_schema(self, extract: Extract, target_uri: str, upload_from_string: str):
+        # Save schema as JSON
+        json_schema = json.dumps(extract.bq_schema, indent=4)
+        if "gs://" not in target_uri:
+            with open(f"{target_uri}/{normalize_str(extract.name)}/schema.json", "wt") as f:
+                f.write(json_schema)
+        else:
+            self.retryer(self.gcp.upload_from_string, json_schema,
+                            f"{target_uri}/{normalize_str(extract.name)}/schema.json")
 
     def load(self, extract: Extract) -> Extract:
         """Loads an Extract into BigQuery

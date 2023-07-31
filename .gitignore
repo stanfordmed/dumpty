@@ -107,3 +107,6 @@ spark_log/
 *.yaml
 *.json
 
+#jar files
+*.jar
+
