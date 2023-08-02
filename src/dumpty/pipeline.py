@@ -474,36 +474,39 @@ class Pipeline:
         # Extract the table with Spark
         extract.extract_uri = None
 
+        if self.config.target_uri is None:
+        # if we don't have a target uri exit the method
+            return extract
+
         if extract.rows == 0:
             # save only the schema if table is empty
             self._save_schema(extract, self.config.target_uri, self.gcp.upload_from_string)
             return extract
 
-        if self.config.target_uri is not None:
-            extract_uri = self._extract(extract, self.config.target_uri)
-            extract.extract_uri = extract_uri
-            extract.extract_date = datetime.now()
+        extract_uri = self._extract(extract, self.config.target_uri)
+        extract.extract_uri = extract_uri
+        extract.extract_date = datetime.now()
 
-            # Suggest a recommended partition size based on the actual extract size (for next run)
-            # only resizes based on GCS targets, for now
-            if extract.partitions is not None and extract.partitions > 0 and "gs://" in extract_uri:
-                extract.gcs_bytes = self.retryer(
-                    self.gcp.get_size_bytes, extract_uri)
-                if extract.gcs_bytes < self.config.target_partition_size_bytes:
-                    # Table does not need partitioning
+        # Suggest a recommended partition size based on the actual extract size (for next run)
+        # only resizes based on GCS targets, for now
+        if extract.partitions is not None and extract.partitions > 0 and "gs://" in extract_uri:
+            extract.gcs_bytes = self.retryer(
+                self.gcp.get_size_bytes, extract_uri)
+            if extract.gcs_bytes < self.config.target_partition_size_bytes:
+                # Table does not need partitioning
+                logger.info(
+                    f"{extract.name} < {self.config.target_partition_size_bytes} bytes, will no longer partition")
+                extract.partition_column = None
+                extract.predicates = None
+                extract.partitions = None
+            else:
+                recommendation = round(
+                    extract.gcs_bytes / self.config.target_partition_size_bytes)
+                if recommendation > 1 and recommendation != extract.partitions:
                     logger.info(
-                        f"{extract.name} < {self.config.target_partition_size_bytes} bytes, will no longer partition")
-                    extract.partition_column = None
-                    extract.predicates = None
-                    extract.partitions = None
-                else:
-                    recommendation = round(
-                        extract.gcs_bytes / self.config.target_partition_size_bytes)
-                    if recommendation > 1 and recommendation != extract.partitions:
-                        logger.info(
-                            f"Adjusted partitions on {extract.name} from {extract.partitions} to {recommendation} for next run")
-                        extract.partitions = recommendation
-                        extract.introspect_date = None  # triggers new introspection next run
+                        f"Adjusted partitions on {extract.name} from {extract.partitions} to {recommendation} for next run")
+                    extract.partitions = recommendation
+                    extract.introspect_date = None  # triggers new introspection next run
 
         self._save_schema(extract, self.config.target_uri, self.gcp.upload_from_string)
         return extract
