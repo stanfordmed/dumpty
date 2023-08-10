@@ -60,3 +60,4 @@ class Config(YAMLWizard):
     introspect_workers: int = 8
     extract_workers: int = 8
     load_workers: int = 32
+    fastcount: bool = False
