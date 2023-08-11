@@ -56,7 +56,7 @@ def config_from_args(argv) -> Config:
                         help='JSON log filename (default: extract.json)')
     
     parser.add_argument('--fastcount', action="store_const", const=True,
-                        help='Rowcount for MSSQL tables with store procedure Sp_spaceused')
+                        help='Rowcount for MSSQL tables with store procedure sp_spaceused')
 
     parser.add_argument('--parse', action='store_true', dest='parse',
                         help='Print parsed config file and exit')
