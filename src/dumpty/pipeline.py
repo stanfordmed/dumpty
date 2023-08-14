@@ -307,8 +307,6 @@ class Pipeline:
         if self.engine.dialect.name == "mssql":
             # MSSQL COUNT(*) can overflow if > INT_MAX
             count_fn = count_big
-            # logger.debug(
-            #         f"counting  and count(*) of {table.name}")
         else:
             count_fn = func.count
         
