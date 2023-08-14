@@ -266,8 +266,6 @@ class Pipeline:
             result = [r[0] for r in query.all()]
             return result
 
-
-
     def introspect(self, extract: Extract) -> Extract:
         """Introspects a SQL table: row counts, min, max, and partitions
 
