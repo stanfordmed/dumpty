@@ -328,33 +328,19 @@ class Pipeline:
             if is_numeric and full_introspect:
                 logger.debug(
                     f"Getting min({pk.name}), max({pk.name}), and count(*) of {extract.name}")
-                
-                if self.config.fastcount:
-                    qry = session.query(func.max(pk).label("max"),
-                                        func.min(pk).label("min")
-                                        ).select_from(table)
-                    res = qry.one()
-                    extract.max = res.max
-                    extract.min = res.min
-                    
-                    result = session.execute(f"EXEC sp_spaceused N'dbo.{extract.name}';").fetchall()
-                    logger.debug(
-                            f"fast counting result of {result[0][1].rstrip()}")
-                    extract.rows = int(result[0][1].rstrip())
-                else:
-                    qry = session.query(func.max(pk).label("max"),
-                                        func.min(pk).label("min"),
-                                        count_fn(
-                                            literal_column("*")).label("count")
-                                        ).select_from(table)
-                    res = qry.one()
-                    extract.max = res.max
-                    extract.min = res.min
-                    extract.rows = res.count
+                qry = session.query(func.max(pk).label("max"),
+                                    func.min(pk).label("min"),
+                                    count_fn(
+                                        literal_column("*")).label("count")
+                                    ).select_from(table)
+                res = qry.one()
+                extract.max = res.max
+                extract.min = res.min
+                extract.rows = res.count
             else:
                 logger.debug(f"Getting count(*) of {extract.name}")
                 if self.config.fastcount:
-                    result = session.execute(f"EXEC sp_spaceused N'dbo.{extract.name}';").fetchall()
+                    result = session.execute(f"EXEC sp_spaceused N'{self.config.schema}.{extract.name}';").fetchall()
                     logger.debug(
                             f"fast counting result of {result[0][1].rstrip()}")
                     extract.rows = int(result[0][1].rstrip())
