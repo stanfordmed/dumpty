@@ -474,46 +474,52 @@ class Pipeline:
         # Extract the table with Spark
         extract.extract_uri = None
 
-        if extract.rows == 0:
-            # Nothing to do here
+        if self.config.target_uri is None:
+        # if we don't have a target uri exit the method
             return extract
 
-        if self.config.target_uri is not None:
-            extract_uri = self._extract(extract, self.config.target_uri)
-            extract.extract_uri = extract_uri
-            extract.extract_date = datetime.now()
+        if extract.rows == 0:
+            # save only the schema if table is empty
+            self._save_schema(extract, self.config.target_uri, self.gcp.upload_from_string)
+            return extract
 
-            # Suggest a recommended partition size based on the actual extract size (for next run)
-            # only resizes based on GCS targets, for now
-            if extract.partitions is not None and extract.partitions > 0 and "gs://" in extract_uri:
-                extract.gcs_bytes = self.retryer(
-                    self.gcp.get_size_bytes, extract_uri)
-                if extract.gcs_bytes < self.config.target_partition_size_bytes:
-                    # Table does not need partitioning
-                    logger.info(
-                        f"{extract.name} < {self.config.target_partition_size_bytes} bytes, will no longer partition")
-                    extract.partition_column = None
-                    extract.predicates = None
-                    extract.partitions = None
-                else:
-                    recommendation = round(
-                        extract.gcs_bytes / self.config.target_partition_size_bytes)
-                    if recommendation > 1 and recommendation != extract.partitions:
-                        logger.info(
-                            f"Adjusted partitions on {extract.name} from {extract.partitions} to {recommendation} for next run")
-                        extract.partitions = recommendation
-                        extract.introspect_date = None  # triggers new introspection next run
+        extract_uri = self._extract(extract, self.config.target_uri)
+        extract.extract_uri = extract_uri
+        extract.extract_date = datetime.now()
 
-            # Save schema as JSON
-            json_schema = json.dumps(extract.bq_schema, indent=4)
-            if "gs://" not in self.config.target_uri:
-                with open(f"{self.config.target_uri}/{normalize_str(extract.name)}/schema.json", "wt") as f:
-                    f.write(json_schema)
+        # Suggest a recommended partition size based on the actual extract size (for next run)
+        # only resizes based on GCS targets, for now
+        if extract.partitions is not None and extract.partitions > 0 and "gs://" in extract_uri:
+            extract.gcs_bytes = self.retryer(
+                self.gcp.get_size_bytes, extract_uri)
+            if extract.gcs_bytes < self.config.target_partition_size_bytes:
+                # Table does not need partitioning
+                logger.info(
+                    f"{extract.name} < {self.config.target_partition_size_bytes} bytes, will no longer partition")
+                extract.partition_column = None
+                extract.predicates = None
+                extract.partitions = None
             else:
-                self.retryer(self.gcp.upload_from_string, json_schema,
-                             f"{self.config.target_uri}/{normalize_str(extract.name)}/schema.json")
+                recommendation = round(
+                    extract.gcs_bytes / self.config.target_partition_size_bytes)
+                if recommendation > 1 and recommendation != extract.partitions:
+                    logger.info(
+                        f"Adjusted partitions on {extract.name} from {extract.partitions} to {recommendation} for next run")
+                    extract.partitions = recommendation
+                    extract.introspect_date = None  # triggers new introspection next run
 
+        self._save_schema(extract, self.config.target_uri, self.gcp.upload_from_string)
         return extract
+
+    def _save_schema(self, extract: Extract, target_uri: str, upload_from_string: str):
+        # Save schema as JSON
+        json_schema = json.dumps(extract.bq_schema, indent=4)
+        if "gs://" not in target_uri:
+            with open(f"{target_uri}/{normalize_str(extract.name)}/schema.json", "wt") as f:
+                f.write(json_schema)
+        else:
+            self.retryer(self.gcp.upload_from_string, json_schema,
+                            f"{target_uri}/{normalize_str(extract.name)}/schema.json")
 
     def load(self, extract: Extract) -> Extract:
         """Loads an Extract into BigQuery
