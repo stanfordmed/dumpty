@@ -181,9 +181,7 @@ class Pipeline:
             schema['name'] = normalize_str(col.name)
             schema['mode'] = "Nullable" if col.nullable else "Required"
 
-            if isinstance(col.type, (SmallInteger, Integer, BigInteger)):
-                schema['type'] = "INT64"
-            elif isinstance(col.type, (DateTime)):
+            if isinstance(col.type, (DateTime)):
                 schema['type'] = "DATETIME"
             elif isinstance(col.type, (Date)):
                 schema['type'] = "DATE"
@@ -196,8 +194,8 @@ class Pipeline:
             elif isinstance(col.type, (LargeBinary)):
                 schema['type'] = "BYTES"
             elif isinstance(col.type, (Numeric)):
-                p = col.type.precision
-                s = col.type.scale
+                p = col.type.precision if col.type.precision is not None else 0
+                s = col.type.scale if col.type.scale is not None else 0
                 if s == 0 and p <= 18:
                     schema['type'] = "INT64"
                 elif (s >= 0 and s <= 9) and ((max(s, 1) <= p) and p <= s+29):
@@ -208,6 +206,8 @@ class Pipeline:
                     schema['type'] = "BIGNUMERIC"
                     schema['precision'] = p
                     schema['scale'] = s
+            elif isinstance(col.type, (SmallInteger, Integer, BigInteger)):
+                schema['type'] = "INT64"
             else:
                 logger.warning(
                     f"Unmapped type in {table.name}.{col.name} ({col.type}), defaulting to STRING")
@@ -252,14 +252,14 @@ class Pipeline:
             # and let python/jdbc handle type conversion. So we cast to a String (VARCHAR) here
             # for anything non-numeric (eg. datetime.datetime) and hope that translates
             # properly in the other direction, in the Spark predicate where clause..
-            if isinstance(column.type, sqltypes.Numeric):
+            if isinstance(column.type, (sqltypes.Numeric, sqltypes.String)):
                 query = session\
                     .query(func.distinct(subquery.c.id), subquery.c.row_num)\
                     .filter(modulo_filter == 0)\
                     .order_by(subquery.c.row_num)
             else:
                 query = session\
-                    .query(func.distinct(cast(subquery.c.id, String)), subquery.c.row_num)\
+                    .query(func.distinct(cast(subquery.c.id, sqltypes.String)), subquery.c.row_num)\
                     .filter(modulo_filter == 0)\
                     .order_by(subquery.c.row_num)
 
@@ -307,8 +307,6 @@ class Pipeline:
             count_fn = count_big
         else:
             count_fn = func.count
-        
-        
 
         if full_introspect:
             if len(table.primary_key.columns) > 0:
@@ -340,9 +338,10 @@ class Pipeline:
             else:
                 logger.debug(f"Getting count(*) of {extract.name}")
                 if self.config.fastcount:
-                    result = session.execute(f"EXEC sp_spaceused N'{self.config.schema}.{extract.name}';").fetchall()
+                    result = session.execute(
+                        f"EXEC sp_spaceused N'{self.config.schema}.{extract.name}';").fetchall()
                     logger.debug(
-                            f"fast counting result of {result[0][1].rstrip()}")
+                        f"fast counting result of {result[0][1].rstrip()}")
                     extract.rows = int(result[0][1].rstrip())
                 else:
                     qry = session.query(
@@ -563,9 +562,11 @@ class Pipeline:
             :raises: :class:`.ValidationException` when a table is not found. Use this
             to fail early if you are not sure if the tables are actually in the SQL database.
         """
-        logger.info(f"Reconciling list of tables against schema {self.config.schema}")
+        logger.info(
+            f"Reconciling list of tables against schema {self.config.schema}")
         sql_tables = self._inspector.get_table_names(schema=self.config.schema)
-        not_found = [t for t in table_names if t.lower() not in (table.lower() for table in sql_tables)]
+        not_found = [t for t in table_names if t.lower() not in (
+            table.lower() for table in sql_tables)]
         if len(not_found) > 0:
             raise ValidationException(
                 f"Could not find these tables in {self.config.schema}: {','.join(not_found)}")
