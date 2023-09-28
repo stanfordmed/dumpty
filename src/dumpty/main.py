@@ -59,6 +59,9 @@ def config_from_args(argv) -> Config:
 
     parser.add_argument('--fastcount', action="store_const", const=True,
                         help='Rowcount for MSSQL tables with store procedure sp_spaceused')
+    
+    parser.add_argument('--schemaonly', action="store_const", const=True,
+                        help='Create dataset and table schema only')
 
     parser.add_argument('--parse', action='store_true', dest='parse',
                         help='Print parsed config file and exit')
@@ -102,6 +105,8 @@ def config_from_args(argv) -> Config:
         config.credentials = args.credentials
     if args.fastcount is not None:
         config.fastcount = True
+    if args.schemaonly is not None:
+        config.schemaonly = True
 
     if config.target_dataset is not None and "." not in config.target_dataset:
         parser.error("Dataset must be in format project.dataset")

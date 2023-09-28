@@ -1,0 +1,1 @@
+* ({uri-jira}/STAR-7371[STAR-7371]) - Add a flag to create dataset and table schemas only

@@ -141,7 +141,7 @@ class Pipeline:
             self.extract, self.extract_queue, self.load_queue, self.error_queue)
 
         load_step = Step(self.load, self.load_queue,
-                         self.done_queue, self.error_queue)
+                        self.done_queue, self.error_queue)
 
         self.introspect_workers = QueueWorkerPool(
             introspect_step, self.introspect_queue.maxsize)
@@ -223,7 +223,10 @@ class Pipeline:
         self._spark_session.stop()
 
     def status(self) -> str:
-        return f"Introspecting:{self.introspect_workers.busy_count()} | Extracting:{self.extract_workers.busy_count()} | Loading:{self.load_workers.busy_count()}"
+        if self.config.schemaonly:
+            return f"Introspecting:{self.introspect_workers.busy_count()}"
+        else:
+            return f"Introspecting:{self.introspect_workers.busy_count()} | Extracting:{self.extract_workers.busy_count()} | Loading:{self.load_workers.busy_count()}"
 
     def submit(self, extracts: List[Extract]):
         """Starts a thread submitting extracts to the introspect_queue and returns immediately
@@ -281,121 +284,122 @@ class Pipeline:
         # Create BQ schema definition
         extract.bq_schema = self.bq_schema(table)
 
-        if extract.introspect_date is not None:
-            # This table was introspected, is it time to refresh?
-            if self.config.introspection_expire_s > 0:
-                if (datetime.now() - extract.introspect_date).total_seconds() > self.config.introspection_expire_s:
-                    # Introspection has expired
-                    logger.info(
-                        f"Introspection for {extract.name} has expired")
-                    full_introspect = True
+        if self.config.schemaonly == False:
+            if extract.introspect_date is not None:
+                # This table was introspected, is it time to refresh?
+                if self.config.introspection_expire_s > 0:
+                    if (datetime.now() - extract.introspect_date).total_seconds() > self.config.introspection_expire_s:
+                        # Introspection has expired
+                        logger.info(
+                            f"Introspection for {extract.name} has expired")
+                        full_introspect = True
+                    else:
+                        # Introspection has not expired
+                        full_introspect = False
                 else:
-                    # Introspection has not expired
+                    # Introspections _never_ expire
                     full_introspect = False
             else:
-                # Introspections _never_ expire
-                full_introspect = False
-        else:
-            # Never been introspected, or partitioning was modified from prior run
-            full_introspect = True
+                # Never been introspected, or partitioning was modified from prior run
+                full_introspect = True
 
-        logger.debug(
-            f"{'Deep' if full_introspect else 'Fast'} introspecting {extract.name}")
+            logger.debug(
+                f"{'Deep' if full_introspect else 'Fast'} introspecting {extract.name}")
 
-        if self.engine.dialect.name == "mssql":
-            # MSSQL COUNT(*) can overflow if > INT_MAX
-            count_fn = count_big
-        else:
-            count_fn = func.count
-
-        if full_introspect:
-            if len(table.primary_key.columns) > 0:
-                # First PK guaranteed(?) to be indexed, so we use that
-                pk = table.primary_key.columns[0]
-                if extract.partition_column != pk.name:
-                    # Partition column has changed since last introspection, reset the partition count
-                    extract.partitions = None
+            if self.engine.dialect.name == "mssql":
+                # MSSQL COUNT(*) can overflow if > INT_MAX
+                count_fn = count_big
             else:
-                pk = None
-        else:
-            pk = table.primary_key.columns[extract.partition_column] if extract.partition_column is not None else None
+                count_fn = func.count
 
-        with Session(self.engine) as session:
-            is_numeric = pk is not None and isinstance(
-                pk.type, sqltypes.Numeric)
-            if is_numeric and full_introspect:
-                logger.debug(
-                    f"Getting min({pk.name}), max({pk.name}), and count(*) of {extract.name}")
-                qry = session.query(func.max(pk).label("max"),
-                                    func.min(pk).label("min"),
-                                    count_fn(
-                                        literal_column("*")).label("count")
-                                    ).select_from(table)
-                res = qry.one()
-                extract.max = res.max
-                extract.min = res.min
-                extract.rows = res.count
-            else:
-                logger.debug(f"Getting count(*) of {extract.name}")
-                if self.config.fastcount:
-                    result = session.execute(
-                        f"EXEC sp_spaceused N'{self.config.schema}.{extract.name}';").fetchall()
-                    logger.debug(
-                        f"fast counting result of {result[0][1].rstrip()}")
-                    extract.rows = int(result[0][1].rstrip())
-                else:
-                    qry = session.query(
-                        count_fn(literal_column("*")).label("count")
-                    ).select_from(table)
-                    extract.rows = qry.scalar()
-
-        if not full_introspect:
-            # Stop here if this table was already introspected recently
-            extract.refresh_date = datetime.now()
-            return extract
-
-        # Continue with full introspection, reset partitioning
-        extract.partition_column = None
-        extract.predicates = None
-
-        # Only partition tables with a PK and would generate at least two partitions when rounded up
-        if pk is not None and extract.rows > 0:
-            partitions = round(
-                extract.rows / self.config.default_rows_per_partition) if extract.partitions is None else extract.partitions
-            if partitions > 1:
-                extract.partitions = partitions
-                extract.partition_column = pk.name
-                slice_width = ceil(extract.rows / extract.partitions)
-
-                if is_numeric and ((extract.rows == extract.max) or (extract.rows == extract.max - 1) or (abs(extract.rows - (extract.max - extract.min)) <= 1)):
-                    # Numeric, sequential PK with no gaps uses default Spark column partitioning
-                    logger.info(
-                        f"{extract.name} using Spark partitioning on {pk.name} ({partitions} partitions)")
-                else:
-                    # Non-numeric, or PK is not sequential and likely heavily skewed, julienne the table instead
-                    slices = self._julienne(table, pk, slice_width)
-                    if len(slices) / partitions < 0.10:
-                        logger.warning(
-                            f"Failed to Julienne {extract.name} on {pk.name}, not enough distinct PK values. Using single-threaded extract.")
-                        extract.predicates = None
-                        extract.partition_column = None
+            if full_introspect:
+                if len(table.primary_key.columns) > 0:
+                    # First PK guaranteed(?) to be indexed, so we use that
+                    pk = table.primary_key.columns[0]
+                    if extract.partition_column != pk.name:
+                        # Partition column has changed since last introspection, reset the partition count
                         extract.partitions = None
+                else:
+                    pk = None
+            else:
+                pk = table.primary_key.columns[extract.partition_column] if extract.partition_column is not None else None
+
+            with Session(self.engine) as session:
+                is_numeric = pk is not None and isinstance(
+                    pk.type, sqltypes.Numeric)
+                if is_numeric and full_introspect:
+                    logger.debug(
+                        f"Getting min({pk.name}), max({pk.name}), and count(*) of {extract.name}")
+                    qry = session.query(func.max(pk).label("max"),
+                                        func.min(pk).label("min"),
+                                        count_fn(
+                                            literal_column("*")).label("count")
+                                        ).select_from(table)
+                    res = qry.one()
+                    extract.max = res.max
+                    extract.min = res.min
+                    extract.rows = res.count
+                else:
+                    logger.debug(f"Getting count(*) of {extract.name}")
+                    if self.config.fastcount:
+                        result = session.execute(
+                            f"EXEC sp_spaceused N'{self.config.schema}.{extract.name}';").fetchall()
+                        logger.debug(
+                            f"fast counting result of {result[0][1].rstrip()}")
+                        extract.rows = int(result[0][1].rstrip())
                     else:
-                        quote_char = "" if is_numeric else "'"
-                        predicates = []
-                        for i in range(len(slices)+1):
-                            if i == 0:
-                                predicates.append(
-                                    f"{pk.name} <= {quote_char}{slices[i]}{quote_char} OR {pk.name} IS NULL ")
-                            elif i == len(slices):
-                                predicates.append(
-                                    f"{pk.name} > {quote_char}{slices[i-1]}{quote_char}")
-                            else:
-                                predicates.append(
-                                    f"{pk.name} > {quote_char}{slices[i-1]}{quote_char} AND {pk.name} <= {quote_char}{slices[i]}{quote_char}")
-                        extract.predicates = predicates
+                        qry = session.query(
+                            count_fn(literal_column("*")).label("count")
+                        ).select_from(table)
+                        extract.rows = qry.scalar()
+
+            if not full_introspect:
+                # Stop here if this table was already introspected recently
+                extract.refresh_date = datetime.now()
+                return extract
+
+            # Continue with full introspection, reset partitioning
+            extract.partition_column = None
+            extract.predicates = None
+
+            # Only partition tables with a PK and would generate at least two partitions when rounded up
+            if pk is not None and extract.rows > 0:
+                partitions = round(
+                    extract.rows / self.config.default_rows_per_partition) if extract.partitions is None else extract.partitions
+                if partitions > 1:
+                    extract.partitions = partitions
+                    extract.partition_column = pk.name
+                    slice_width = ceil(extract.rows / extract.partitions)
+
+                    if is_numeric and ((extract.rows == extract.max) or (extract.rows == extract.max - 1) or (abs(extract.rows - (extract.max - extract.min)) <= 1)):
+                        # Numeric, sequential PK with no gaps uses default Spark column partitioning
                         logger.info(
-                            f"{extract.name} using predicate partitioning on {pk.name} ({partitions} predicates)")
+                            f"{extract.name} using Spark partitioning on {pk.name} ({partitions} partitions)")
+                    else:
+                        # Non-numeric, or PK is not sequential and likely heavily skewed, julienne the table instead
+                        slices = self._julienne(table, pk, slice_width)
+                        if len(slices) / partitions < 0.10:
+                            logger.warning(
+                                f"Failed to Julienne {extract.name} on {pk.name}, not enough distinct PK values. Using single-threaded extract.")
+                            extract.predicates = None
+                            extract.partition_column = None
+                            extract.partitions = None
+                        else:
+                            quote_char = "" if is_numeric else "'"
+                            predicates = []
+                            for i in range(len(slices)+1):
+                                if i == 0:
+                                    predicates.append(
+                                        f"{pk.name} <= {quote_char}{slices[i]}{quote_char} OR {pk.name} IS NULL ")
+                                elif i == len(slices):
+                                    predicates.append(
+                                        f"{pk.name} > {quote_char}{slices[i-1]}{quote_char}")
+                                else:
+                                    predicates.append(
+                                        f"{pk.name} > {quote_char}{slices[i-1]}{quote_char} AND {pk.name} <= {quote_char}{slices[i]}{quote_char}")
+                            extract.predicates = predicates
+                            logger.info(
+                                f"{extract.name} using predicate partitioning on {pk.name} ({partitions} predicates)")
 
         now = datetime.now()
         extract.introspect_date = now
@@ -481,35 +485,38 @@ class Pipeline:
         # Extract the table with Spark
         extract.extract_uri = None
 
-        if extract.rows == 0:
+        if extract.rows == 0 and self.config.schemaonly == False:
             # Nothing to do here
             return extract
 
         if self.config.target_uri is not None:
-            extract_uri = self._extract(extract, self.config.target_uri)
-            extract.extract_uri = extract_uri
-            extract.extract_date = datetime.now()
+            if self.config.schemaonly == False:
+                extract_uri = self._extract(extract, self.config.target_uri)
+                extract.extract_uri = extract_uri
+                extract.extract_date = datetime.now()
 
-            # Suggest a recommended partition size based on the actual extract size (for next run)
-            # only resizes based on GCS targets, for now
-            if extract.partitions is not None and extract.partitions > 0 and "gs://" in extract_uri:
-                extract.gcs_bytes = self.retryer(
-                    self.gcp.get_size_bytes, extract_uri)
-                if extract.gcs_bytes < self.config.target_partition_size_bytes:
-                    # Table does not need partitioning
-                    logger.info(
-                        f"{extract.name} < {self.config.target_partition_size_bytes} bytes, will no longer partition")
-                    extract.partition_column = None
-                    extract.predicates = None
-                    extract.partitions = None
-                else:
-                    recommendation = round(
-                        extract.gcs_bytes / self.config.target_partition_size_bytes)
-                    if recommendation > 1 and recommendation != extract.partitions:
-                        logger.info(
-                            f"Adjusted partitions on {extract.name} from {extract.partitions} to {recommendation} for next run")
-                        extract.partitions = recommendation
-                        extract.introspect_date = None  # triggers new introspection next run
+                # Suggest a recommended partition size based on the actual extract size (for next run)
+                # only resizes based on GCS targets, for now
+
+                if self.config.schemaonly == False:
+                    if extract.partitions is not None and extract.partitions > 0 and "gs://" in extract_uri:
+                        extract.gcs_bytes = self.retryer(
+                            self.gcp.get_size_bytes, extract_uri)
+                        if extract.gcs_bytes < self.config.target_partition_size_bytes:
+                            # Table does not need partitioning
+                            logger.info(
+                                f"{extract.name} < {self.config.target_partition_size_bytes} bytes, will no longer partition")
+                            extract.partition_column = None
+                            extract.predicates = None
+                            extract.partitions = None
+                        else:
+                            recommendation = round(
+                                extract.gcs_bytes / self.config.target_partition_size_bytes)
+                            if recommendation > 1 and recommendation != extract.partitions:
+                                logger.info(
+                                    f"Adjusted partitions on {extract.name} from {extract.partitions} to {recommendation} for next run")
+                                extract.partitions = recommendation
+                                extract.introspect_date = None  # triggers new introspection next run
 
             # Save schema as JSON
             json_schema = json.dumps(extract.bq_schema, indent=4)
@@ -536,7 +543,7 @@ class Pipeline:
 
         # Load into BigQuery
         if self.config.target_dataset is not None:
-            if extract.rows > 0:
+            if self.config.schemaonly == False and extract.rows > 0:
                 # Load from GCS into BQ
                 bq_rows: int = 0
                 bq_bytes: int = 0
