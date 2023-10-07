@@ -262,7 +262,7 @@ class Pipeline:
                     .order_by(subquery.c.row_num)
             else:
                 query = session\
-                    .query(func.distinct(cast(subquery.c.id, sqltypes.String)), subquery.c.row_num)\
+                    .query(func.distinct(cast(subquery.c.id, sqltypes.String(1024))), subquery.c.row_num)\
                     .filter(modulo_filter == 0)\
                     .order_by(subquery.c.row_num)
 
