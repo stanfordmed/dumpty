@@ -1,0 +1,3 @@
+DUMPTY CHANGELOG
+
+* ({uri-jira}/STAR-7141[STAR-7141]) - Speed up table counting in dumpty with new optional flag
