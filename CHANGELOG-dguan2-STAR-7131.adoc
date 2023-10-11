@@ -1,0 +1,1 @@
+* ({uri-jira}/STAR-7131[STAR-7131]) - Add support for Oracle

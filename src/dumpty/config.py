@@ -61,3 +61,4 @@ class Config(YAMLWizard):
     extract_workers: int = 8
     load_workers: int = 32
     fastcount: bool = False
+    schemaonly: bool = False

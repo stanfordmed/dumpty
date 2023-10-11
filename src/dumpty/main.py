@@ -3,6 +3,8 @@ import json
 import logging
 import os
 import sys
+import oracledb
+
 from datetime import datetime
 from pathlib import Path
 from queue import Empty
@@ -54,9 +56,12 @@ def config_from_args(argv) -> Config:
 
     parser.add_argument('--logfile', type=str,
                         help='JSON log filename (default: extract.json)')
-    
+
     parser.add_argument('--fastcount', action="store_const", const=True,
                         help='Rowcount for MSSQL tables with store procedure sp_spaceused')
+    
+    parser.add_argument('--schemaonly', action="store_const", const=True,
+                        help='Create dataset and table schema only')
 
     parser.add_argument('--parse', action='store_true', dest='parse',
                         help='Print parsed config file and exit')
@@ -100,6 +105,8 @@ def config_from_args(argv) -> Config:
         config.credentials = args.credentials
     if args.fastcount is not None:
         config.fastcount = True
+    if args.schemaonly is not None:
+        config.schemaonly = True
 
     if config.target_dataset is not None and "." not in config.target_dataset:
         parser.error("Dataset must be in format project.dataset")
@@ -144,8 +151,14 @@ def main(args=None):
     completed: List[Extract] = []
 
     # Initialize SqlAlchemy
-    engine = create_engine(config.sqlalchemy.url, pool_size=config.introspect_workers, connect_args=config.sqlalchemy.connect_args,
-                           pool_pre_ping=True, max_overflow=config.introspect_workers, isolation_level=config.sqlalchemy.isolation_level, echo=False)
+    if config.sqlalchemy.url.startswith("oracle"):
+        oracledb.version = "8.3.0"
+        sys.modules["cx_Oracle"] = oracledb
+        engine = create_engine(config.sqlalchemy.url, pool_size=config.introspect_workers,
+                               pool_pre_ping=True, max_overflow=config.introspect_workers, echo=False)
+    else:
+        engine = create_engine(config.sqlalchemy.url, pool_size=config.introspect_workers, connect_args=config.sqlalchemy.connect_args,
+                               pool_pre_ping=True, max_overflow=config.introspect_workers, isolation_level=config.sqlalchemy.isolation_level, echo=False)
 
     failed = False
     with ExtractDB(config.tinydb_database_file, default_table_name=config.schema) as extract_db:
