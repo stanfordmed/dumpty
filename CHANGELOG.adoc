@@ -1,3 +1,14 @@
-DUMPTY CHANGELOG
+= DUMPTY Changelog
+:uri-repo: https://github.com/stanfordmed/dumpty
+:uri-jira: https://stanfordmed.atlassian.net/browse
+:icons: font
+:star: icon:star[role=red]
+ifndef::icons[]
+:star: &#9733;
+endif::[]
 
+This document provides a high-level view of the changes introduced in DUMPTY by release.
+For a detailed view of what has changed, refer to the {uri-repo}/commits/main[commit history] on GitHub.
+
+== DUMPTY Release 2023-10-11
 * ({uri-jira}/STAR-7141[STAR-7141]) - Speed up table counting in dumpty with new optional flag
