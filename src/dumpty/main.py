@@ -3,13 +3,14 @@ import json
 import logging
 import os
 import sys
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from queue import Empty
 from typing import List
 
 import psutil
 from alive_progress import alive_bar
+from tinydb import Query, TinyDB
 from dumpty.config import Config
 from dumpty.extract import Extract, ExtractDB
 from dumpty.pipeline import Pipeline
@@ -26,7 +27,7 @@ from dumpty import logger
 
 def config_from_args(argv) -> Config:
     parser = argparse.ArgumentParser(
-        description="Unnamed database export utility")
+        description="Clarity database export utility named DUMPTY")
 
     parser.add_argument('--spark-loglevel', default='WARN', dest='spark_loglevel',
                         help='Set Spark logging level: ALL, DEBUG, ERROR, FATAL, INFO, OFF, TRACE, WARN(default)')
@@ -67,6 +68,9 @@ def config_from_args(argv) -> Config:
     parser.add_argument('dataset', type=str, nargs='?',
                         help='project.dataset to load extract (requires gs:// uri)')
 
+    parser.add_argument('--extract', type=str,
+                        help='Flag that indicates whether this is a FULL or INCREMENTAL extract')
+
     args = parser.parse_args(argv)
     logger.setLevel(args.loglevel)
 
@@ -101,6 +105,8 @@ def config_from_args(argv) -> Config:
     if args.fastcount is not None:
         config.fastcount = True
 
+    if args.extract is not None:
+        config.extract = args.extract
     if config.target_dataset is not None and "." not in config.target_dataset:
         parser.error("Dataset must be in format project.dataset")
 
@@ -120,6 +126,9 @@ def config_from_args(argv) -> Config:
 
 
 def main(args=None):
+
+    print("DUMPTY ETL STARTED AT: " +
+          datetime.now().strftime("%m/%d/%Y, %H:%M:%S"))
 
     config: Config = config_from_args(args)
 
@@ -148,48 +157,123 @@ def main(args=None):
                            pool_pre_ping=True, max_overflow=config.introspect_workers, isolation_level=config.sqlalchemy.isolation_level, echo=False)
 
     failed = False
+
     with ExtractDB(config.tinydb_database_file, default_table_name=config.schema) as extract_db:
         with Pipeline(engine, retryer, config) as pipeline:
+            with engine.connect() as con:
 
             # Create destination dataset
-            if config.target_dataset is not None:
-                retryer(pipeline.gcp.bigquery_create_dataset, dataset_ref=config.target_dataset, drop=config.drop_dataset, location=config.target_dataset_location,
-                        description=config.target_dataset_description, labels=config.target_dataset_pre_labels, access_entries=config.target_dataset_access_entries)
+                # DO NOT DROP THE SINGLE COPY OF RAW CLARITY DATASET - drop_dataset: false
+                if config.target_dataset is not None:
+                    retryer(pipeline.gcp.bigquery_create_dataset, dataset_ref=config.target_dataset, drop=config.drop_dataset, location=config.target_dataset_location,
+                            description=config.target_dataset_description, labels=config.target_dataset_pre_labels, access_entries=config.target_dataset_access_entries)
 
-            if config.reconcile:
+                if config.reconcile:
                 # Check if tables being requested actually exist in SQL database before doing anything else
                 # This can be very slow for databases with thousands of tables so it is off by default
-                pipeline.reconcile(config.tables)
+                    pipeline.reconcile(config.tables)
 
+                # STORE THE INITIAL VALUE OF LAST SUCCESSFUL RUN IN A TINY DB DATABASE
+                db = TinyDB(config.tinydb_date)
+                if db.get(Query().name == 'last_successful_run') == None:
+                    db.insert({'name': 'last_successful_run',
+                               'value': config.last_successful_run})
+                print(
+                    "\nLAST SUCCESSFUL ETL EXECUTION DATE (BEFORE EXTRACT): ", db.all())
+                # READ THE DATE OF LAST SUCCESSFUL RUN FROM THE TINY DB AND USE IT
+                last_successful_run = db.get(
+                    Query().name == 'last_successful_run').get('value')
+
+                """
+                STEPS:
+                1 - FIRST CREATE A LIST OF TABLES THAT HAD DATA CHANGES (between the last successful ETL execution date and today)
+                2 - SECONDLY INTROSPECT AND EXTRACT THE TABLES THAT HAD DATA CHANGES AND LOAD THOSE TABLES INTO BIGQUERY
+                3 - UPDATE THE LAST SUCCESSFUL ETL EXECUTION DATE
+                """
+
+                print("\nFIRST CREATE A LIST OF TABLES THAT HAD DATA CHANGES...")
+
+                table_list = config.tables
+                print("Total number of tables in YAML: ", len(table_list))
+
+                print("Type of extract: ", config.extract.strip())
+
+                if config.extract.strip() == "incremental":
+
+                    print("Running INCREMENTAL EXTRACTION ETL...")
+
+                    query = "SELECT DISTINCT TABLE_NAME FROM [CLARITY].[dbo].[CR_STAT_EXTRACT] WHERE CONVERT(DATE, INITIALIZE_TIME) >= CONVERT(DATE, '" + last_successful_run + \
+                        "') AND STATUS IN ('Success', 'Warning') AND LOAD_TYPE IN ('FULL', 'REQ', 'APPEND') AND EXEC_DESCRIPTOR LIKE 'rpt%prd~primary%' AND FILE_SIZE_BYTES > 0 " + \
+                        "UNION SELECT DISTINCT TABLE_NAME FROM [CLARITY].[dbo].[CR_STAT_DERTBL] WHERE CONVERT(DATE, END_DATE_ABSOLUTE) >= CONVERT(DATE, '" + last_successful_run + \
+                        "') AND STATUS IN ('Success', 'Warning') AND LOAD_TYPE IN ('FULL', 'REQ', 'APPEND') "
+                    rs = con.execute(query)
+                    rs_all = rs.fetchall()
+
+                    result_list = []
+                    for row in rs_all:
+                        result_list.append(row[0])
+
+                    print("Total number of tables that has data changes in CR_STAT_EXTRACT & CR_STAT_DERTBL: ",
+                          len(result_list))
+
+                    table_list.sort()
+                    result_list.sort()
+
+                    tables_to_extract = [
+                        value for value in table_list if value in result_list]
+
+                    print("Total number of tables with data changes for INCREMENTAL extraction: ", len(
+                        tables_to_extract))
+
+                elif config.extract.strip() == "full":
+
+                    print("Running FULL EXTRACTION ETL...")
+
+                    tables_to_extract = [value for value in table_list]
+
+                    print("Total number of tables for FULL extraction: ", len(
+                        tables_to_extract))
+
+            print("\nSECONDLY INTROSPECT AND EXTRACT THE TABLES...")
+
+            try:
             # Start a background thread to feed Extract objects to introspect queue
-            pipeline.submit([extract_db.get(table) for table in config.tables])
+                pipeline.submit([extract_db.get(table)
+                                for table in tables_to_extract])
 
-            count = 0
-            with alive_bar(len(config.tables), dual_line=True, stats=False, disable=not config.progress_bar) as bar:
-                while count < len(config.tables) and pipeline.error_queue.qsize() == 0 and not failed:
-                    bar.text = f"| {pipeline.status()} | CPU:{psutil.cpu_percent()}% | Mem:{psutil.virtual_memory()[2]}%"
-                    try:
-                        extract: Extract = pipeline.done_queue.get(timeout=1)
-                        extract_db.save(extract)
-                        completed.append(extract)
-                        summary['tables'].append(extract.name)
-                        if config.target_dataset is not None:
-                            if not extract.consistent():
-                                warning = f"{extract.name}: row count mismatch (expected: {extract.rows}, loaded: {extract.rows_loaded}+"
-                                logger.warning(warning)
-                                summary['warnings'].append(warning)
-                        count += 1
-                        bar()
-                    except Empty:
-                        pass
-                    except KeyboardInterrupt:
-                        logger.error("Control-c pressed, shutting down!")
+                count = 0
+                with alive_bar(len(tables_to_extract), dual_line=True, stats=False, disable=not config.progress_bar) as bar:
+                    while count < len(tables_to_extract) and pipeline.error_queue.qsize() == 0 and not failed:
+                        bar.text = f"| {pipeline.status()} | CPU:{psutil.cpu_percent()}% | Mem:{psutil.virtual_memory()[2]}%"
+                        try:
+                            extract: Extract = pipeline.done_queue.get(
+                                timeout=1)
+                            extract_db.save(extract)
+                            completed.append(extract)
+                            summary['tables'].append(extract.name)
+                            if config.target_dataset is not None:
+                                if not extract.consistent():
+                                    warning = f"{extract.name}: row count mismatch (expected: {extract.rows}, loaded: {extract.rows_loaded}+"
+                                    logger.warning(warning)
+                                    summary['warnings'].append(warning)
+                            count += 1
+                            bar()
+                        except Empty:
+                            pass
+                        except KeyboardInterrupt:
+                            logger.error("Control-c pressed, shutting down!")
+                            pipeline.shutdown()
+                            failed = True
+
+                    if pipeline.error_queue.qsize() > 0:
                         pipeline.shutdown()
                         failed = True
 
-                if pipeline.error_queue.qsize() > 0:
-                    pipeline.shutdown()
-                    failed = True
+            except Exception as e:
+                print("\nETL FAILED!!!")
+                logger.error("EXCEPTION: ", e)
+                pipeline.shutdown()
+                failed = True
 
             if not failed and config.target_dataset is not None and len(config.target_dataset_post_labels) > 0:
                 retryer(pipeline.gcp.bigquery_apply_labels,
@@ -198,6 +282,14 @@ def main(args=None):
             if not failed and config.target_dataset is not None and len(config.target_dataset_additional_access_entries) > 0:
                 retryer(pipeline.gcp.bigquery_append_access_entries,
                         dataset_ref=config.target_dataset, access_entries=config.target_dataset_additional_access_entries)
+
+            if not failed:
+                # UPDATE THE VALUES IN THE TINY DB DATABASE AFTER A SUCCESSFUL DATA EXTRACTION
+                db.upsert({'value': str(date.today().strftime("%d-%b-%Y"))},
+                          Query().name == "last_successful_run")
+
+            print("\nDATA EXTRACTION IS DONE!!!")
+            print("\LAST SUCCESSFUL ETL EXECUTION DATE (AFTER EXTRACT): ", db.all())
 
     # Summarize
     summary['end_date'] = datetime.now()
@@ -221,9 +313,14 @@ def main(args=None):
             f"{len(summary['tables'])} tables loaded, with warnings")
 
     if failed:
-        logger.error("Extract failed")
+        logger.error("\nDUMPTY ETL FAILED AT: " +
+                     datetime.now().strftime("%m/%d/%Y, %H:%M:%S"))
         exit(1)
+
+    print("\nDUMPTY ETL ENDED AT: " +
+          datetime.now().strftime("%m/%d/%Y, %H:%M:%S"))
 
 
 if __name__ == '__main__':
     main()
+

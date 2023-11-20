@@ -53,7 +53,7 @@ class Config(YAMLWizard):
     project: str = None
     credentials: str = None
     retry: bool = False
-    tinydb_database_file: str = "tinydb.json"
+    tinydb_database_file: str = "tinydb_dumpy.json"
     reconcile: bool = False
     normalize_schema: bool = True
     default_rows_per_partition: int = 1e6
@@ -61,3 +61,6 @@ class Config(YAMLWizard):
     extract_workers: int = 8
     load_workers: int = 32
     fastcount: bool = False
+    tinydb_date: str = "tinydb_date.json"
+    last_successful_run: str = None
+    extract: str = None

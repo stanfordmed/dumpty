@@ -55,7 +55,7 @@ target_partition_size_bytes: 52428800
 # First-pass introspection will use this value to determine partition size
 default_rows_per_partition: 1000000
 
-tinydb_database_file: tinydb.json
+tinydb_database_file: tinydb_dumpy.json
 
 # Introspection expires after this many seconds since last
 introspection_expire_s: 604800
@@ -109,3 +109,5 @@ schema: dbo
 tables: 
   - REPORTS
   - LOGS
+tinydb_date: tinydb_date.json
+last_successful_run: "20-NOV-2023"
