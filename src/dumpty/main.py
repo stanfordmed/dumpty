@@ -79,11 +79,26 @@ def config_from_args(argv) -> Config:
         Path(args.config).read_text())
 
     template.environment.filters['shuffle'] = filter_shuffle
+    #???parsed = template.render(env=os.environ, last_successful_run=last_successful_run)
     parsed = template.render(env=os.environ)
     if args.parse:
         print(parsed)
         sys.exit()
     config = Config.from_yaml(parsed)
+
+    # STORE THE INITIAL VALUE OF LAST SUCCESSFUL RUN IN A TINY DB DATABASE
+    db = TinyDB(config.tinydb_date)
+    if db.get(Query().name == 'last_successful_run') == None:
+        db.insert({'name': 'last_successful_run',
+                    'value': config.last_successful_run})
+    # READ THE DATE OF LAST SUCCESSFUL RUN FROM THE TINY DB AND USE IT
+    last_successful_run = db.get(
+        Query().name == 'last_successful_run').get('value')
+    db.close()
+    # ADD THE LAST SUCCESSFUL RUN DATE TO THE SQL QUERY
+    config.last_successful_run = last_successful_run
+    query = config.tables_query.replace("last_successful_run", last_successful_run)
+    config.tables_query = query
 
     # Command line args override config file
     if args.uri is not None:
@@ -127,15 +142,33 @@ def config_from_args(argv) -> Config:
 
 def main(args=None):
 
-    print("DUMPTY ETL STARTED AT: " +
-          datetime.now().strftime("%m/%d/%Y, %H:%M:%S"))
+    logger.info("DUMPTY ETL STARTED...")
 
     config: Config = config_from_args(args)
+
+    logger.info("config.schema: %s", config.schema)
+    logger.info("config.project: %s", config.project)
+    logger.info("config.target_uri: %s", config.target_uri)
+    logger.info("config.target_dataset: %s", config.target_dataset)
+    logger.info("config.target_dataset_description: %s", config.target_dataset_description)
+    logger.info("config.target_dataset_location: %s", config.target_dataset_location)
+    logger.info("config.drop_dataset: %s", config.drop_dataset)
+    logger.info("config.normalize_schema: %s", config.normalize_schema)
+    logger.info("config.extract: %s", config.extract)
+    logger.info("config.last_successful_run: %s", config.last_successful_run)
+    logger.info("config.tables_query: %s", config.tables_query)
+    logger.info("config.tinydb_database_file: %s", config.tinydb_database_file)
+    logger.info("config.tinydb_date: %s", config.tinydb_date)
+    logger.info("config.log_file: %s", config.log_file)
+    logger.info("config.retry: %s", config.retry)
+    logger.info("config.reconcile: %s", config.reconcile)
+    logger.info("config.fastcount: %s", config.fastcount)
+    logger.info("config.progress_bar: %s", config.progress_bar)
 
     # Default retry for network operations: 2^x * 1 second between each retry, starting with 5s, up to 30s, die after 30 minutes of retries
     # reraise=True places the exception at the END of the stack-trace dump
     retryer = Retrying(wait=wait_random_exponential(multiplier=1, min=5, max=30), after=after_log(logger, logging.WARNING),
-                       stop=(stop_after_delay(600) | stop_after_attempt(0 if not config.retry else 999)), reraise=True,
+                       stop=(stop_after_delay(600) | stop_after_attempt(0 if not config.retry else 999)), reraise=True, 
                        retry=retry_if_not_exception_type(BadRequest))
 
     # Create spark logdir if needed
@@ -162,7 +195,7 @@ def main(args=None):
         with Pipeline(engine, retryer, config) as pipeline:
             with engine.connect() as con:
 
-            # Create destination dataset
+                # Create destination dataset
                 # DO NOT DROP THE SINGLE COPY OF RAW CLARITY DATASET - drop_dataset: false
                 if config.target_dataset is not None:
                     retryer(pipeline.gcp.bigquery_create_dataset, dataset_ref=config.target_dataset, drop=config.drop_dataset, location=config.target_dataset_location,
@@ -173,17 +206,6 @@ def main(args=None):
                 # This can be very slow for databases with thousands of tables so it is off by default
                     pipeline.reconcile(config.tables)
 
-                # STORE THE INITIAL VALUE OF LAST SUCCESSFUL RUN IN A TINY DB DATABASE
-                db = TinyDB(config.tinydb_date)
-                if db.get(Query().name == 'last_successful_run') == None:
-                    db.insert({'name': 'last_successful_run',
-                               'value': config.last_successful_run})
-                print(
-                    "\nLAST SUCCESSFUL ETL EXECUTION DATE (BEFORE EXTRACT): ", db.all())
-                # READ THE DATE OF LAST SUCCESSFUL RUN FROM THE TINY DB AND USE IT
-                last_successful_run = db.get(
-                    Query().name == 'last_successful_run').get('value')
-
                 """
                 STEPS:
                 1 - FIRST CREATE A LIST OF TABLES THAT HAD DATA CHANGES (between the last successful ETL execution date and today)
@@ -191,21 +213,20 @@ def main(args=None):
                 3 - UPDATE THE LAST SUCCESSFUL ETL EXECUTION DATE
                 """
 
-                print("\nFIRST CREATE A LIST OF TABLES THAT HAD DATA CHANGES...")
+                logger.info("FIRST CREATE A LIST OF TABLES THAT HAD DATA CHANGES...")
 
                 table_list = config.tables
-                print("Total number of tables in YAML: ", len(table_list))
-
-                print("Type of extract: ", config.extract.strip())
+                logger.info("Total number of tables in YAML: %d", len(table_list))
 
                 if config.extract.strip() == "incremental":
 
-                    print("Running INCREMENTAL EXTRACTION ETL...")
+                    logger.info("Running INCREMENTAL EXTRACTION ETL...")
 
-                    query = "SELECT DISTINCT TABLE_NAME FROM [CLARITY].[dbo].[CR_STAT_EXTRACT] WHERE CONVERT(DATE, INITIALIZE_TIME) >= CONVERT(DATE, '" + last_successful_run + \
-                        "') AND STATUS IN ('Success', 'Warning') AND LOAD_TYPE IN ('FULL', 'REQ', 'APPEND') AND EXEC_DESCRIPTOR LIKE 'rpt%prd~primary%' AND FILE_SIZE_BYTES > 0 " + \
-                        "UNION SELECT DISTINCT TABLE_NAME FROM [CLARITY].[dbo].[CR_STAT_DERTBL] WHERE CONVERT(DATE, END_DATE_ABSOLUTE) >= CONVERT(DATE, '" + last_successful_run + \
-                        "') AND STATUS IN ('Success', 'Warning') AND LOAD_TYPE IN ('FULL', 'REQ', 'APPEND') "
+                    #query = "SELECT DISTINCT TABLE_NAME FROM [CLARITY].[dbo].[CR_STAT_EXTRACT] WHERE CONVERT(DATE, INITIALIZE_TIME) >= CONVERT(DATE, '" + last_successful_run + \
+                    #    "') AND STATUS IN ('Success', 'Warning') AND LOAD_TYPE IN ('FULL', 'REQ', 'APPEND') AND EXEC_DESCRIPTOR LIKE 'rpt%prd~primary%' AND FILE_SIZE_BYTES > 0 " + \
+                    #    "UNION SELECT DISTINCT TABLE_NAME FROM [CLARITY].[dbo].[CR_STAT_DERTBL] WHERE CONVERT(DATE, END_DATE_ABSOLUTE) >= CONVERT(DATE, '" + last_successful_run + \
+                    #    "') AND STATUS IN ('Success', 'Warning') AND LOAD_TYPE IN ('FULL', 'REQ', 'APPEND') "
+                    query = config.tables_query
                     rs = con.execute(query)
                     rs_all = rs.fetchall()
 
@@ -213,7 +234,7 @@ def main(args=None):
                     for row in rs_all:
                         result_list.append(row[0])
 
-                    print("Total number of tables that has data changes in CR_STAT_EXTRACT & CR_STAT_DERTBL: ",
+                    logger.info("Total number of tables that has data changes in CR_STAT_EXTRACT & CR_STAT_DERTBL: %d",
                           len(result_list))
 
                     table_list.sort()
@@ -222,22 +243,22 @@ def main(args=None):
                     tables_to_extract = [
                         value for value in table_list if value in result_list]
 
-                    print("Total number of tables with data changes for INCREMENTAL extraction: ", len(
+                    logger.info("Total number of tables with data changes for INCREMENTAL extraction: %d", len(
                         tables_to_extract))
 
                 elif config.extract.strip() == "full":
 
-                    print("Running FULL EXTRACTION ETL...")
+                    logger.info("Running FULL EXTRACTION ETL...")
 
                     tables_to_extract = [value for value in table_list]
 
-                    print("Total number of tables for FULL extraction: ", len(
+                    logger.info("Total number of tables for FULL extraction: %d", len(
                         tables_to_extract))
 
-            print("\nSECONDLY INTROSPECT AND EXTRACT THE TABLES...")
+            logger.info("SECONDLY INTROSPECT AND EXTRACT THE TABLES...")
 
             try:
-            # Start a background thread to feed Extract objects to introspect queue
+                # Start a background thread to feed Extract objects to introspect queue
                 pipeline.submit([extract_db.get(table)
                                 for table in tables_to_extract])
 
@@ -270,7 +291,7 @@ def main(args=None):
                         failed = True
 
             except Exception as e:
-                print("\nETL FAILED!!!")
+                logger.error("\nETL FAILED!!!")
                 logger.error("EXCEPTION: ", e)
                 pipeline.shutdown()
                 failed = True
@@ -283,14 +304,21 @@ def main(args=None):
                 retryer(pipeline.gcp.bigquery_append_access_entries,
                         dataset_ref=config.target_dataset, access_entries=config.target_dataset_additional_access_entries)
 
+            db = TinyDB(config.tinydb_date)
             if not failed:
                 # UPDATE THE VALUES IN THE TINY DB DATABASE AFTER A SUCCESSFUL DATA EXTRACTION
                 db.upsert({'value': str(date.today().strftime("%d-%b-%Y"))},
                           Query().name == "last_successful_run")
 
-            print("\nDATA EXTRACTION IS DONE!!!")
-            print("\LAST SUCCESSFUL ETL EXECUTION DATE (AFTER EXTRACT): ", db.all())
+            last_successful_run = db.get(
+                Query().name == 'last_successful_run').get('value')
+            #print("\nLAST SUCCESSFUL ETL EXECUTION DATE (AFTER EXTRACT): %s", db.all())
+            logger.info(
+                "LAST SUCCESSFUL ETL EXECUTION DATE (AFTER EXTRACT): %s", last_successful_run)
 
+            db.close()
+            logger.info("DATA EXTRACTION IS DONE!!!")
+    
     # Summarize
     summary['end_date'] = datetime.now()
     summary['elapsed_s'] = round(
@@ -313,14 +341,12 @@ def main(args=None):
             f"{len(summary['tables'])} tables loaded, with warnings")
 
     if failed:
-        logger.error("\nDUMPTY ETL FAILED AT: " +
+        logger.error("DUMPTY ETL FAILED AT: ", 
                      datetime.now().strftime("%m/%d/%Y, %H:%M:%S"))
         exit(1)
 
-    print("\nDUMPTY ETL ENDED AT: " +
-          datetime.now().strftime("%m/%d/%Y, %H:%M:%S"))
+    logger.info("DUMPTY ETL ENDED...")
 
 
 if __name__ == '__main__':
     main()
-
