@@ -340,9 +340,10 @@ class Pipeline:
             else:
                 logger.debug(f"Getting count(*) of {extract.name}")
                 if self.config.fastcount:
-                    result = session.execute(f"EXEC sp_spaceused N'{self.config.schema}.{extract.name}';").fetchall()
+                    result = session.execute(
+                        f"EXEC sp_spaceused N'{self.config.schema}.{extract.name}';").fetchall()
                     logger.debug(
-                            f"fast counting result of {result[0][1].rstrip()}")
+                        f"fast counting result of {result[0][1].rstrip()}")
                     extract.rows = int(result[0][1].rstrip())
                 else:
                     qry = session.query(
@@ -488,7 +489,8 @@ class Pipeline:
 
         if extract.rows == 0:
             # save only the schema if table is empty
-            self._save_schema(extract, self.config.target_uri, self.gcp.upload_from_string)
+            self._save_schema(extract, self.config.target_uri,
+                              self.gcp.upload_from_string)
             return extract
 
         extract_uri = self._extract(extract, self.config.target_uri)
@@ -516,7 +518,8 @@ class Pipeline:
                     extract.partitions = recommendation
                     extract.introspect_date = None  # triggers new introspection next run
 
-        self._save_schema(extract, self.config.target_uri, self.gcp.upload_from_string)
+        self._save_schema(extract, self.config.target_uri,
+                          self.gcp.upload_from_string)
         return extract
 
     def _save_schema(self, extract: Extract, target_uri: str, upload_from_string: str):
@@ -527,7 +530,7 @@ class Pipeline:
                 f.write(json_schema)
         else:
             self.retryer(self.gcp.upload_from_string, json_schema,
-                            f"{target_uri}/{normalize_str(extract.name)}/schema.json")
+                         f"{target_uri}/{normalize_str(extract.name)}/schema.json")
 
     def load(self, extract: Extract) -> Extract:
         """Loads an Extract into BigQuery
@@ -569,9 +572,11 @@ class Pipeline:
             :raises: :class:`.ValidationException` when a table is not found. Use this
             to fail early if you are not sure if the tables are actually in the SQL database.
         """
-        logger.info(f"Reconciling list of tables against schema {self.config.schema}")
+        logger.info(
+            f"Reconciling list of tables against schema {self.config.schema}")
         sql_tables = self._inspector.get_table_names(schema=self.config.schema)
-        not_found = [t for t in table_names if t.lower() not in (table.lower() for table in sql_tables)]
+        not_found = [t for t in table_names if t.lower() not in (
+            table.lower() for table in sql_tables)]
         if len(not_found) > 0:
             raise ValidationException(
                 f"Could not find these tables in {self.config.schema}: {','.join(not_found)}")

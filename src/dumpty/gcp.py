@@ -158,13 +158,21 @@ class GCP:
         else:
             raise Exception("Unknown format {}".format(format))
 
+        try:
+            # Update description of the table if it exists (setting this in LoadJobConfig() below gives an exception when we do not drop and recreate the dataset)
+            table_exists = self._bigquery_client.get_table(table)
+            table_exists.description = description
+            table_exists = self._bigquery_client.update_table(
+                table_exists, ["description"]
+            )
+        except NotFound:
+            pass
         job_config = LoadJobConfig(
             schema=[SchemaField.from_api_repr(field)
                     for field in schema],
             source_format=source_format,
             create_disposition=CreateDisposition.CREATE_IF_NEEDED,
-            write_disposition=WriteDisposition.WRITE_TRUNCATE,
-            destination_table_description=description
+            write_disposition=WriteDisposition.WRITE_TRUNCATE
         )
 
         # Some tables may take longer to load than the default deadline of 600s
