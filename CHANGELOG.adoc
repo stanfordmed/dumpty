@@ -10,5 +10,13 @@ endif::[]
 This document provides a high-level view of the changes introduced in DUMPTY by release.
 For a detailed view of what has changed, refer to the {uri-repo}/commits/main[commit history] on GitHub.
 
+== DUMPTY Release 2023-12-04
+PHASE 1 of Incremental Clarity ETL for LPCH:
+* ({uri-jira}/STAR-6838[STAR-6838]) - Definition for Incremental Clarity ETL for LPCH Clarity + Build a PoC for couple of LPCH Clarity tables
+* ({uri-jira}/STAR-7442[STAR-7442]) - Change DUMPTY so that it will extract and load a LPCH Clarity table from on premise LPCH Clarity only if it has data changes
+* ({uri-jira}/STAR-7474[STAR-7474]) - QC for the updated DUMPTY for 27,600 LPCH Clarity tables so that it will extract and load only those tables that has data changes
+* ({uri-jira}/STAR-7550[STAR-7550]) - Deploy the new incremental DUMPTY ETL for LPCH Clarity to production
+* Changes that were made in the cronjob execution scripts are in https://github.com/susom/starr-deploy/tree/master/dumpty folder.
+
 == DUMPTY Release 2023-10-11
 * ({uri-jira}/STAR-7141[STAR-7141]) - Speed up table counting in dumpty with new optional flag
