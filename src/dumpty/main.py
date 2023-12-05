@@ -27,7 +27,7 @@ from dumpty import logger
 
 def config_from_args(argv) -> Config:
     parser = argparse.ArgumentParser(
-        description="Clarity database export utility named DUMPTY")
+        description="MS SQL Server Database export utility named DUMPTY")
 
     parser.add_argument('--spark-loglevel', default='WARN', dest='spark_loglevel',
                         help='Set Spark logging level: ALL, DEBUG, ERROR, FATAL, INFO, OFF, TRACE, WARN(default)')
@@ -195,7 +195,7 @@ def main(args=None):
             with engine.connect() as con:
 
                 # Create destination dataset
-                # DO NOT DROP THE SINGLE COPY OF RAW CLARITY DATASET - drop_dataset: false
+                # DO NOT DROP THE SINGLE COPY OF DATASET - drop_dataset: false
                 if config.target_dataset is not None:
                     retryer(pipeline.gcp.bigquery_create_dataset, dataset_ref=config.target_dataset, drop=config.drop_dataset, location=config.target_dataset_location,
                             description=config.target_dataset_description, labels=config.target_dataset_pre_labels, access_entries=config.target_dataset_access_entries)
@@ -221,10 +221,6 @@ def main(args=None):
 
                     logger.info("Running INCREMENTAL EXTRACTION ETL...")
 
-                    #query = "SELECT DISTINCT TABLE_NAME FROM [CLARITY].[dbo].[CR_STAT_EXTRACT] WHERE CONVERT(DATE, INITIALIZE_TIME) >= CONVERT(DATE, '" + last_successful_run + \
-                    #    "') AND STATUS IN ('Success', 'Warning') AND LOAD_TYPE IN ('FULL', 'REQ', 'APPEND') AND EXEC_DESCRIPTOR LIKE 'rpt%prd~primary%' AND FILE_SIZE_BYTES > 0 " + \
-                    #    "UNION SELECT DISTINCT TABLE_NAME FROM [CLARITY].[dbo].[CR_STAT_DERTBL] WHERE CONVERT(DATE, END_DATE_ABSOLUTE) >= CONVERT(DATE, '" + last_successful_run + \
-                    #    "') AND STATUS IN ('Success', 'Warning') AND LOAD_TYPE IN ('FULL', 'REQ', 'APPEND') "
                     query = config.tables_query
                     rs = con.execute(query)
                     rs_all = rs.fetchall()
