@@ -27,13 +27,18 @@ class JdbcConfig:
     properties: Dict
 
 
-@ dataclass
+@dataclass
 class Config(YAMLWizard):
     spark: SparkConfig
     jdbc: JdbcConfig
     sqlalchemy: SqlalchemyConfig
+
     schema: str
     tables: List[str]
+
+    credentials: str = None
+
+    project: str = None
     target_uri: str = None
     target_dataset: str = None
     target_dataset_description: str = None
@@ -46,18 +51,22 @@ class Config(YAMLWizard):
     target_dataset_additional_access_entries: List[dict] = field(
         default_factory=list)
     target_partition_size_bytes: int = 52428800
-    introspection_expire_s: int = 0  # 0 = no expiration
-    drop_dataset: bool = False
-    progress_bar: bool = True
-    log_file: str = 'extract.json'
-    project: str = None
-    credentials: str = None
-    retry: bool = False
-    tinydb_database_file: str = "tinydb.json"
-    reconcile: bool = False
-    normalize_schema: bool = True
+
     default_rows_per_partition: int = 1e6
+    introspection_expire_s: int = 0  # 0 = no expiration
     introspect_workers: int = 8
     extract_workers: int = 8
     load_workers: int = 32
+    drop_dataset: bool = False
+    normalize_schema: bool = True
+    last_successful_run: str = None
+    extract: str = None
+    tables_query: str = None
+    tinydb_database_file: str = "tinydb_dumpy.json"
+    tinydb_date: str = "tinydb_date.json"
+    log_file: str = 'extract.json'
+
+    retry: bool = False
+    reconcile: bool = False
     fastcount: bool = False
+    progress_bar: bool = True
