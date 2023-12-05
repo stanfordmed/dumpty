@@ -10,7 +10,7 @@ endif::[]
 This document provides a high-level view of the changes introduced in DUMPTY by release.
 For a detailed view of what has changed, refer to the {uri-repo}/commits/main[commit history] on GitHub.
 
-== DUMPTY Release 2023-12-04
+== DUMPTY Release 2023-12-04 (v2.0.0)
 PHASE 1 of Incremental Clarity ETL for LPCH:
 * ({uri-jira}/STAR-6838[STAR-6838]) - Definition for Incremental Clarity ETL for LPCH Clarity + Build a PoC for couple of LPCH Clarity tables
 * ({uri-jira}/STAR-7442[STAR-7442]) - Change DUMPTY so that it will extract and load a LPCH Clarity table from on premise LPCH Clarity only if it has data changes
