@@ -1,0 +1,1 @@
+* ({uri-jira}/STAR-7627[STAR-7627]) - BQ table load call returns 503 code and this results in ETL failure if a table load takes more than 1 hour - hasn't failed in PROD yet
