@@ -177,7 +177,7 @@ class GCP:
 
         # Some tables may take longer to load than the default deadline of 600s
         load_job = self._bigquery_client.load_table_from_uri(uri, table, retry=DEFAULT_RETRY.with_timeout(
-            7200), job_config=job_config, location=location) # Let's try a bigger value for timeut
+            7200), job_config=job_config, location=location) # Let's try a bigger value for timeout
         load_job.result()
 
         return load_job.output_rows, load_job.output_bytes
