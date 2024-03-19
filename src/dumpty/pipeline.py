@@ -343,9 +343,10 @@ class Pipeline:
                     logger.debug(f"Getting count(*) of {extract.name}")
                     if self.config.fastcount:
                         result = session.execute(
-                            f"EXEC sp_spaceused N'{self.config.schema}.{extract.name}';").fetchall()
+                            
+                        f"EXEC sp_spaceused N'{self.config.schema}.{extract.name}';").fetchall()
                         logger.debug(
-                            f"fast counting result of {result[0][1].rstrip()}")
+                        f"fast counting result of {result[0][1].rstrip()}")
                         extract.rows = int(result[0][1].rstrip())
                     else:
                         qry = session.query(
@@ -485,49 +486,49 @@ class Pipeline:
         # Extract the table with Spark
         extract.extract_uri = None
 
-        if extract.rows == 0 and self.config.schemaonly == False:
+        if extract.rows == 0:
             # Nothing to do here
             return extract
 
         if self.config.target_uri is not None:
-            if self.config.schemaonly == False:
-                extract_uri = self._extract(extract, self.config.target_uri)
-                extract.extract_uri = extract_uri
-                extract.extract_date = datetime.now()
+            extract_uri = self._extract(extract, self.config.target_uri)
+            extract.extract_uri = extract_uri
+            extract.extract_date = datetime.now()
 
-                # Suggest a recommended partition size based on the actual extract size (for next run)
-                # only resizes based on GCS targets, for now
+            # Suggest a recommended partition size based on the actual extract size (for next run)
+            # only resizes based on GCS targets, for now
+            if extract.partitions is not None and extract.partitions > 0 and "gs://" in extract_uri:
+                extract.gcs_bytes = self.retryer(
+                    self.gcp.get_size_bytes, extract_uri)
+                if extract.gcs_bytes < self.config.target_partition_size_bytes:
+                    # Table does not need partitioning
+                    logger.info(
+                        f"{extract.name} < {self.config.target_partition_size_bytes} bytes, will no longer partition")
+                    extract.partition_column = None
+                    extract.predicates = None
+                    extract.partitions = None
+                else:
+                    recommendation = round(
+                        extract.gcs_bytes / self.config.target_partition_size_bytes)
+                    if recommendation > 1 and recommendation != extract.partitions:
+                        logger.info(
+                            f"Adjusted partitions on {extract.name} from {extract.partitions} to {recommendation} for next run")
+                        extract.partitions = recommendation
+                        extract.introspect_date = None  # triggers new introspection next run
 
-                if self.config.schemaonly == False:
-                    if extract.partitions is not None and extract.partitions > 0 and "gs://" in extract_uri:
-                        extract.gcs_bytes = self.retryer(
-                            self.gcp.get_size_bytes, extract_uri)
-                        if extract.gcs_bytes < self.config.target_partition_size_bytes:
-                            # Table does not need partitioning
-                            logger.info(
-                                f"{extract.name} < {self.config.target_partition_size_bytes} bytes, will no longer partition")
-                            extract.partition_column = None
-                            extract.predicates = None
-                            extract.partitions = None
-                        else:
-                            recommendation = round(
-                                extract.gcs_bytes / self.config.target_partition_size_bytes)
-                            if recommendation > 1 and recommendation != extract.partitions:
-                                logger.info(
-                                    f"Adjusted partitions on {extract.name} from {extract.partitions} to {recommendation} for next run")
-                                extract.partitions = recommendation
-                                extract.introspect_date = None  # triggers new introspection next run
-
-            # Save schema as JSON
-            json_schema = json.dumps(extract.bq_schema, indent=4)
-            if "gs://" not in self.config.target_uri:
-                with open(f"{self.config.target_uri}/{normalize_str(extract.name)}/schema.json", "wt") as f:
-                    f.write(json_schema)
-            else:
-                self.retryer(self.gcp.upload_from_string, json_schema,
-                             f"{self.config.target_uri}/{normalize_str(extract.name)}/schema.json")
-
+        self._save_schema(extract, self.config.target_uri,
+                          self.gcp.upload_from_string)
         return extract
+
+    def _save_schema(self, extract: Extract, target_uri: str, upload_from_string: str):
+        # Save schema as JSON
+        json_schema = json.dumps(extract.bq_schema, indent=4)
+        if "gs://" not in target_uri:
+            with open(f"{target_uri}/{normalize_str(extract.name)}/schema.json", "wt") as f:
+                f.write(json_schema)
+        else:
+            self.retryer(self.gcp.upload_from_string, json_schema,
+                         f"{target_uri}/{normalize_str(extract.name)}/schema.json")
 
     def load(self, extract: Extract) -> Extract:
         """Loads an Extract into BigQuery
