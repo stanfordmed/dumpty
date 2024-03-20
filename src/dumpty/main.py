@@ -101,7 +101,10 @@ def config_from_args(argv) -> Config:
     db.close()
     # ADD THE LAST SUCCESSFUL RUN DATE TO THE SQL QUERY
     config.last_successful_run = last_successful_run
-    query = config.tables_query.replace("last_successful_run", last_successful_run)
+    if last_successful_run != None:
+        query = config.tables_query.replace("last_successful_run", last_successful_run)
+    else:
+        query = config.tables_query
     config.tables_query = query
 
     # Command line args override config file
@@ -230,7 +233,7 @@ def main(args=None):
                 table_list = config.tables
                 logger.info("Total number of tables in YAML: %d", len(table_list))
 
-                if config.extract.strip() == "incremental":
+                if config.extract != None and config.extract.strip() == "incremental":
 
                     logger.info("Running INCREMENTAL EXTRACTION ETL...")
 
@@ -254,7 +257,7 @@ def main(args=None):
                     logger.info("Total number of tables with data changes for INCREMENTAL extraction: %d", len(
                         tables_to_extract))
 
-                elif config.extract.strip() == "full":
+                elif config.extract != None and config.extract.strip() == "full":
 
                     logger.info("Running FULL EXTRACTION ETL...")
 
