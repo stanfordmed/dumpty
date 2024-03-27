@@ -12,7 +12,7 @@ from typing import Callable, List
 from pyspark import SparkConf
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql.functions import col
-from sqlalchemy import Column, MetaData, Table, func, inspect, literal_column
+from sqlalchemy import Column, MetaData, Table, func, inspect, literal_column, text
 from sqlalchemy.engine import Engine, Inspector
 from sqlalchemy.dialects.mssql import UNIQUEIDENTIFIER
 from sqlalchemy.orm import Session
@@ -134,8 +134,13 @@ class Pipeline:
         self.error_queue = Queue()
 
         # Setup ELT steps and queues
-        introspect_step = Step(
-            self.introspect, self.introspect_queue, self.extract_queue, self.error_queue)
+        # introspect in differenct ways for mssql and oracle
+        if self.engine.dialect.name == "mssql":
+            introspect_step = Step(
+                self.introspect, self.introspect_queue, self.extract_queue, self.error_queue)
+        else:
+            introspect_step = Step(
+                self.introspect_oracle, self.introspect_queue, self.extract_queue, self.error_queue)
 
         extract_step = Step(
             self.extract, self.extract_queue, self.load_queue, self.error_queue)
@@ -196,11 +201,12 @@ class Pipeline:
             elif isinstance(col.type, (Numeric)):
                 p = col.type.precision if col.type.precision is not None else 0
                 s = col.type.scale if col.type.scale is not None else 0
+
                 if s == 0 and p <= 18:
                     schema['type'] = "INT64"
                 elif (s >= 0 and s <= 9) and ((max(s, 1) <= p) and p <= s+29):
                     schema['type'] = "NUMERIC"
-                    schema['precision'] = p
+                    schema['precision'] = p 
                     schema['scale'] = s
                 elif (s >= 0 and s <= 38) and ((max(s, 1) <= p) and p <= s+38):
                     schema['type'] = "BIGNUMERIC"
@@ -268,7 +274,7 @@ class Pipeline:
 
             result = [r[0] for r in query.all()]
             return result
-
+    
     def introspect(self, extract: Extract) -> Extract:
         """Introspects a SQL table: row counts, min, max, and partitions
 
@@ -278,6 +284,8 @@ class Pipeline:
         Returns:
             Extract: Updated extract object (same object as input)
         """
+
+        logger.debug(f"Call introspect")
         # Introspect table from SQL database
         table = Table(extract.name, self._metadata, autoload=True)
 
@@ -363,6 +371,7 @@ class Pipeline:
             extract.partition_column = None
             extract.predicates = None
 
+            
             # Only partition tables with a PK and would generate at least two partitions when rounded up
             if pk is not None and extract.rows > 0:
                 partitions = round(
@@ -408,6 +417,130 @@ class Pipeline:
 
         return extract
 
+    def _julienne_oracle(self, table: Table, width: int, partitions: int):
+        logger.debug(
+            f"Julienning {table.name} on ROWID into {width}-row slices")
+
+        result_list_of_dict = []
+        with Session(self.engine) as session:
+            sql = text(f"""select grp,
+                            dbms_rowid.rowid_create( 1, data_object_id, lo_fno, lo_block, 0 ) min_rid,
+                            dbms_rowid.rowid_create( 1, data_object_id, hi_fno, hi_block, 10000 ) max_rid
+                        from (
+                        select distinct grp,
+                            first_value(relative_fno)
+                                over (partition by grp order by relative_fno, block_id
+                                    rows between unbounded preceding and unbounded following) lo_fno,
+                            first_value(block_id    )
+                            over (partition by grp order by relative_fno, block_id
+                                    rows between unbounded preceding and unbounded following) lo_block,
+                            last_value(relative_fno)
+                            over (partition by grp order by relative_fno, block_id
+                                    rows between unbounded preceding and unbounded following) hi_fno,
+                            last_value(block_id+blocks-1)
+                            over (partition by grp order by relative_fno, block_id
+                                    rows between unbounded preceding and unbounded following) hi_block,
+                            sum(blocks) over (partition by grp) sum_blocks
+                        from (
+                        select relative_fno,
+                            block_id,
+                            blocks,
+                            trunc( (sum(blocks) over (order by relative_fno, block_id)-0.01) / (sum(blocks) over ()/{partitions}) ) grp
+                        from dba_extents
+                        where segment_name = upper('{table.name}') 
+                        and owner = '{self.config.schema}' order by block_id
+                            )
+                            ),
+                            (select data_object_id from all_objects where object_name = upper('{table.name}') AND DATA_OBJECT_ID IS NOT NULL )
+                        ORDER BY grp""")
+            result = session.execute(sql)
+
+            result_list_of_dict = []
+            for (col1, col2, col3) in result.all():
+                result_list_of_dict.append({'bound1': col2, 'bound2': col3})
+
+        return result_list_of_dict
+        
+
+    # for Oracle only
+    def introspect_oracle(self, extract: Extract) -> Extract:
+        """
+        """
+        logger.debug(f"Call introspect_oracle")
+        # Introspect table from SQL database
+        table = Table(extract.name, self._metadata, autoload=True)
+
+        # Create BQ schema definition
+        extract.bq_schema = self.bq_schema(table)
+
+        # Never been introspected, or partitioning was modified from prior run 
+        full_introspect = True 
+        logger.debug(
+                f"{'Deep' if full_introspect else 'Fast'} introspecting {extract.name}")
+        
+        # Get rowcount
+        count_fn = func.count
+        
+        if self.config.fastcount:
+            with Session(self.engine) as session:
+                result = session.execute(
+                    f"SELECT NUM_ROWS FROM all_tables where TABLE_NAME='{extract.name}' AND OWNER='{self.config.schema}'").fetchall()
+                logger.debug(
+                    f"fast counting result of {result[0][0]}")
+                extract.rows = result[0][0]
+        else:
+            logger.debug(f"Getting count(*) of {extract.name}")
+            with Session(self.engine) as session:
+                qry = session.query(
+                                    count_fn(literal_column("*")).label("count")
+                                ).select_from(table)
+                extract.rows = qry.scalar()
+        
+        # Continue with full introspection, reset partitioning
+        extract.partition_column = None
+        extract.predicates = None
+
+        logger.debug(f"introspect_oracle extract.rows: {extract.rows}, extract.partitions: {extract.partitions}, self.config.default_rows_per_partition: {self.config.default_rows_per_partition}")
+
+        if extract.rows is not None:
+            partitions = round(
+                        extract.rows / self.config.default_rows_per_partition) if extract.partitions is None else extract.partitions
+        else:
+            partitions = 0
+        
+        logger.debug(f"partitions#: {partitions}")
+        if partitions > 1:
+            extract.partitions = partitions
+            slice_width = ceil(extract.rows / extract.partitions)
+
+            slices = self._julienne_oracle(table, slice_width, partitions) # return pairs of ROWIDs
+
+            logger.debug(f"slices#: {len(slices)}")
+
+            if len(slices) / partitions < 0.10:
+                logger.warning(
+                    f"Failed to Julienne {extract.name} on ROWID, not enough ROWID values. Using single-threaded extract.")
+                extract.predicates = None
+                extract.partition_column = None
+                extract.partitions = None
+            else:
+                predicates = []
+                for dic in slices:
+                    # logger.debug(
+                    # f"ROWID >= '{dic['bound1']}' AND ROWID <= '{dic['bound2']}'")
+                    predicates.append(
+                        f"ROWID >= '{dic['bound1']}' AND ROWID <= '{dic['bound2']}'")
+
+                extract.predicates = predicates
+                logger.info(
+                    f"{extract.name} using predicate partitioning on ROWID ({partitions} partitions)")
+
+        now = datetime.now()
+        extract.introspect_date = now
+        extract.refresh_date = now
+
+        return extract
+
     def _extract(self, extract: Extract, uri: str) -> str:
 
         session = self._spark_session
@@ -427,6 +560,7 @@ class Pipeline:
         if extract.predicates is not None and len(extract.predicates) > 0:
             session.sparkContext.setJobDescription(
                 f'{extract.name} ({len(extract.predicates)} predicates)')
+            
             df = session.read.jdbc(
                 self.config.jdbc.url,
                 table=extract.name,
@@ -544,7 +678,7 @@ class Pipeline:
 
         # Load into BigQuery
         if self.config.target_dataset is not None:
-            if self.config.schemaonly == False and extract.rows > 0:
+            if extract.rows is not None and self.config.schemaonly == False and extract.rows > 0:
                 # Load from GCS into BQ
                 bq_rows: int = 0
                 bq_bytes: int = 0

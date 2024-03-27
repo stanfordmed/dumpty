@@ -101,7 +101,7 @@ def config_from_args(argv) -> Config:
     db.close()
     # ADD THE LAST SUCCESSFUL RUN DATE TO THE SQL QUERY
     config.last_successful_run = last_successful_run
-    if last_successful_run != None:
+    if last_successful_run != None and config.tables_query != None:
         query = config.tables_query.replace("last_successful_run", last_successful_run)
     else:
         query = config.tables_query

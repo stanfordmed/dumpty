@@ -43,6 +43,7 @@ jdbc:
     driver: "oracle.jdbc.driver.OracleDriver"
     fetchsize: "1000"
     sessionInitStatement: "BEGIN execute immediate 'alter session set \"_serial_direct_read\"=true'; END;"
+    customSchema: "bpa_ack_lockout_tm_float Double"
 
 # Your target file size for Spark output files
 target_partition_size_bytes: 52428800
