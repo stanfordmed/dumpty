@@ -261,14 +261,14 @@ class Pipeline:
             # and let python/jdbc handle type conversion. So we cast to a String (VARCHAR) here
             # for anything non-numeric (eg. datetime.datetime) and hope that translates
             # properly in the other direction, in the Spark predicate where clause..
-            if isinstance(column.type, (sqltypes.Numeric, sqltypes.String)):
+            if isinstance(column.type, sqltypes.Numeric):
                 query = session\
                     .query(func.distinct(subquery.c.id), subquery.c.row_num)\
                     .filter(modulo_filter == 0)\
                     .order_by(subquery.c.row_num)
             else:
                 query = session\
-                    .query(func.distinct(cast(subquery.c.id, sqltypes.String(1024))), subquery.c.row_num)\
+                    .query(func.distinct(cast(subquery.c.id, String)), subquery.c.row_num)\
                     .filter(modulo_filter == 0)\
                     .order_by(subquery.c.row_num)
 
@@ -285,7 +285,6 @@ class Pipeline:
             Extract: Updated extract object (same object as input)
         """
 
-        logger.debug(f"Call introspect")
         # Introspect table from SQL database
         table = Table(extract.name, self._metadata, autoload=True)
 
@@ -305,7 +304,7 @@ class Pipeline:
                         # Introspection has not expired
                         full_introspect = False
                 else:
-                    # Introspections _never_ expire
+                    # Introspection has not expired
                     full_introspect = False
             else:
                 # Never been introspected, or partitioning was modified from prior run
@@ -466,7 +465,6 @@ class Pipeline:
     def introspect_oracle(self, extract: Extract) -> Extract:
         """
         """
-        logger.debug(f"Call introspect_oracle")
         # Introspect table from SQL database
         table = Table(extract.name, self._metadata, autoload=True)
 
