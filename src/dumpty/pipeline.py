@@ -500,8 +500,7 @@ class Pipeline:
 
         logger.debug(f"introspect_oracle extract.rows: {extract.rows}, extract.partitions: {extract.partitions}, self.config.default_rows_per_partition: {self.config.default_rows_per_partition}")
 
-        partitions = round(
-                        extract.rows / self.config.default_rows_per_partition) if extract.partitions is None else extract.partitions
+        partitions = round(extract.rows / self.config.default_rows_per_partition)
         
         logger.debug(f"partitions#: {partitions}")
         if partitions > 1:
@@ -555,7 +554,6 @@ class Pipeline:
         if extract.predicates is not None and len(extract.predicates) > 0:
             session.sparkContext.setJobDescription(
                 f'{extract.name} ({len(extract.predicates)} predicates)')
-            
             df = session.read.jdbc(
                 self.config.jdbc.url,
                 table=extract.name,
