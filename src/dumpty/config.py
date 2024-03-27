@@ -69,4 +69,5 @@ class Config(YAMLWizard):
     retry: bool = False
     reconcile: bool = False
     fastcount: bool = False
+    schemaonly: bool = False
     progress_bar: bool = True
