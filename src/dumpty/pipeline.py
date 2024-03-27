@@ -671,7 +671,7 @@ class Pipeline:
 
         # Load into BigQuery
         if self.config.target_dataset is not None:
-            if extract.rows is not None and self.config.schemaonly == False and extract.rows > 0:
+            if self.config.schemaonly == False and extract.rows > 0:
                 # Load from GCS into BQ
                 bq_rows: int = 0
                 bq_bytes: int = 0
