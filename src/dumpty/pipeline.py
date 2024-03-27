@@ -488,7 +488,7 @@ class Pipeline:
                 logger.debug(
                     f"fast counting result of {result[0][0]}")
                 extract.rows = result[0][0]
-        else:
+        if self.config.fastcount == False or extract.rows is None:
             logger.debug(f"Getting count(*) of {extract.name}")
             with Session(self.engine) as session:
                 qry = session.query(
@@ -502,11 +502,8 @@ class Pipeline:
 
         logger.debug(f"introspect_oracle extract.rows: {extract.rows}, extract.partitions: {extract.partitions}, self.config.default_rows_per_partition: {self.config.default_rows_per_partition}")
 
-        if extract.rows is not None:
-            partitions = round(
+        partitions = round(
                         extract.rows / self.config.default_rows_per_partition) if extract.partitions is None else extract.partitions
-        else:
-            partitions = 0
         
         logger.debug(f"partitions#: {partitions}")
         if partitions > 1:
