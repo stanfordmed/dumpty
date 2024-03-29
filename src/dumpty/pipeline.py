@@ -526,6 +526,8 @@ class Pipeline:
                         f"ROWID >= '{dic['bound1']}' AND ROWID <= '{dic['bound2']}'")
 
                 extract.predicates = predicates
+                extract.partition_column = "ROWID"
+                extract.partitions = partitions
                 logger.info(
                     f"{extract.name} using predicate partitioning on ROWID ({partitions} partitions)")
 
