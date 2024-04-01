@@ -416,48 +416,103 @@ class Pipeline:
 
         return extract
 
+    def _table_partitioned(self, table: Table):
+        with Session(self.engine) as session:
+            sql = text(f"""select upper(partitioned) from dba_tables where owner='{self.config.schema}' and table_name=upper('{table.name}')""")
+            result = session.execute(sql)
+            if result.fetchone()[0] == "YES":
+                return True
+        return False
+
     def _julienne_oracle(self, table: Table, width: int, partitions: int):
         logger.debug(
             f"Julienning {table.name} on ROWID into {width}-row slices")
-
         result_list_of_dict = []
+        
         with Session(self.engine) as session:
-            sql = text(f"""select grp,
-                            dbms_rowid.rowid_create( 1, data_object_id, lo_fno, lo_block, 0 ) min_rid,
-                            dbms_rowid.rowid_create( 1, data_object_id, hi_fno, hi_block, 10000 ) max_rid
-                        from (
-                        select distinct grp,
-                            first_value(relative_fno)
+            # The table was partitioned or subpartitioned in database
+            if self._table_partitioned(table):
+                logger.debug(
+                    f"Julienning {table.name} on with existing partitions")
+                sql = text(f"""select min_rid, max_rid
+                        from
+                        (select distinct NVL(dba_tab_subpartitions.SUBPARTITION_NAME, dba_tab_partitions.PARTITION_NAME) as subject_name, dba_tab_partitions.table_name  from dba_tab_partitions
+                            left join dba_tab_subpartitions on dba_tab_subpartitions.PARTITION_NAME=dba_tab_partitions.PARTITION_NAME
+                                                            and dba_tab_subpartitions.TABLE_OWNER = dba_tab_partitions.TABLE_OWNER
+                            where dba_tab_partitions.table_owner = '{self.config.schema}' and dba_tab_partitions.table_name = upper('{table.name}')
+                            ) current_partition
+                        join (
+                        select    subobject_name,
+                                    dbms_rowid.rowid_create( 1, data_object_id, lo_fno, lo_block, 0 ) min_rid,
+                                dbms_rowid.rowid_create( 1, data_object_id, hi_fno, hi_block, 10000 ) max_rid
+                                from (
+                                select distinct grp,
+                                first_value(relative_fno) over (partition by grp order by relative_fno,
+                                block_id rows between unbounded preceding and unbounded following) lo_fno,
+                                first_value(block_id) over (partition by grp order by relative_fno,
+                                block_id rows between unbounded preceding and unbounded following) lo_block,
+                                last_value(relative_fno) over (partition by grp order by relative_fno,
+                                block_id rows between unbounded preceding and unbounded following) hi_fno,
+                                last_value(block_id+blocks-1) over (partition by grp order by relative_fno,
+                                block_id rows between unbounded preceding and unbounded following) hi_block,
+                                sum(blocks) over (partition by grp) sum_blocks
+                                from (
+                                select	relative_fno,
+                                        block_id,
+                                        blocks,
+                                        trunc( (sum(blocks) over (order by relative_fno, block_id)-0.01) /
+                                        (sum(blocks) over ()/1) ) grp
+                                from		dba_extents
+                                where	segment_name = upper('{table.name}')
+                                and		owner = '{self.config.schema}'
+                                order by block_id)
+                                ),
+                                (select data_object_id, subobject_name, object_name from dba_objects
+                                where	object_name = upper('{table.name}')
+                                and	owner='{self.config.schema}')) create_predicate on create_predicate.subobject_name=current_partition.subject_name""")
+                result = session.execute(sql)
+                for (col1, col2) in result.all():
+                    # logger.debug(
+                    #         f"Julienning {table.name} to predicate: {col1} - {col2}")
+                    result_list_of_dict.append({'bound1': col1, 'bound2': col2})
+
+            # For non-partitioned table
+            else:
+                sql = text(f"""select --grp,
+                                dbms_rowid.rowid_create( 1, data_object_id, lo_fno, lo_block, 0 ) min_rid,
+                                dbms_rowid.rowid_create( 1, data_object_id, hi_fno, hi_block, 10000 ) max_rid
+                            from (
+                            select distinct grp,
+                                first_value(relative_fno)
+                                    over (partition by grp order by relative_fno, block_id
+                                        rows between unbounded preceding and unbounded following) lo_fno,
+                                first_value(block_id    )
                                 over (partition by grp order by relative_fno, block_id
-                                    rows between unbounded preceding and unbounded following) lo_fno,
-                            first_value(block_id    )
-                            over (partition by grp order by relative_fno, block_id
-                                    rows between unbounded preceding and unbounded following) lo_block,
-                            last_value(relative_fno)
-                            over (partition by grp order by relative_fno, block_id
-                                    rows between unbounded preceding and unbounded following) hi_fno,
-                            last_value(block_id+blocks-1)
-                            over (partition by grp order by relative_fno, block_id
-                                    rows between unbounded preceding and unbounded following) hi_block,
-                            sum(blocks) over (partition by grp) sum_blocks
-                        from (
-                        select relative_fno,
-                            block_id,
-                            blocks,
-                            trunc( (sum(blocks) over (order by relative_fno, block_id)-0.01) / (sum(blocks) over ()/{partitions}) ) grp
-                        from dba_extents
-                        where segment_name = upper('{table.name}') 
-                        and owner = '{self.config.schema}' order by block_id
-                            )
-                            ),
-                            (select data_object_id from all_objects where object_name = upper('{table.name}') AND DATA_OBJECT_ID IS NOT NULL )
-                        ORDER BY grp""")
-            result = session.execute(sql)
-
-            result_list_of_dict = []
-            for (col1, col2, col3) in result.all():
-                result_list_of_dict.append({'bound1': col2, 'bound2': col3})
-
+                                        rows between unbounded preceding and unbounded following) lo_block,
+                                last_value(relative_fno)
+                                over (partition by grp order by relative_fno, block_id
+                                        rows between unbounded preceding and unbounded following) hi_fno,
+                                last_value(block_id+blocks-1)
+                                over (partition by grp order by relative_fno, block_id
+                                        rows between unbounded preceding and unbounded following) hi_block,
+                                sum(blocks) over (partition by grp) sum_blocks
+                            from (
+                            select relative_fno,
+                                block_id,
+                                blocks,
+                                trunc( (sum(blocks) over (order by relative_fno, block_id)-0.01) / (sum(blocks) over ()/{partitions}) ) grp
+                            from dba_extents
+                            where segment_name = upper('{table.name}') 
+                            and owner = '{self.config.schema}' order by block_id
+                                )
+                                ),
+                                (select data_object_id from all_objects where object_name = upper('{table.name}') AND DATA_OBJECT_ID IS NOT NULL )
+                            ORDER BY grp""")
+                result = session.execute(sql)
+                for (col1, col2) in result.all():
+                    result_list_of_dict.append({'bound1': col1, 'bound2': col2})
+        logger.debug(
+                    f"Julienning {table.name} to predicate#: {len(result_list_of_dict)}")
         return result_list_of_dict
         
 
@@ -498,38 +553,36 @@ class Pipeline:
         extract.partition_column = None
         extract.predicates = None
 
-        logger.debug(f"introspect_oracle extract.rows: {extract.rows}, extract.partitions: {extract.partitions}, self.config.default_rows_per_partition: {self.config.default_rows_per_partition}")
-
         partitions = round(extract.rows / self.config.default_rows_per_partition)
         
-        logger.debug(f"partitions#: {partitions}")
+        logger.debug(f"ETA partitions#: {partitions}")
         if partitions > 1:
             extract.partitions = partitions
             slice_width = ceil(extract.rows / extract.partitions)
 
             slices = self._julienne_oracle(table, slice_width, partitions) # return pairs of ROWIDs
 
-            logger.debug(f"slices#: {len(slices)}")
+            # if len(slices) / partitions < 0.10:
+            #     logger.warning(
+            #         f"Failed to Julienne {extract.name} on ROWID, not enough ROWID values. Using single-threaded extract.")
+            #     extract.predicates = None
+            #     extract.partition_column = None
+            #     extract.partitions = None
+            # else:
+            predicates = []
+            for dic in slices:
+                logger.debug(
+                    f"ROWID >= '{dic['bound1']}' AND ROWID <= '{dic['bound2']}'")
+                predicates.append(
+                    f"ROWID >= '{dic['bound1']}' AND ROWID <= '{dic['bound2']}'")
 
-            if len(slices) / partitions < 0.10:
-                logger.warning(
-                    f"Failed to Julienne {extract.name} on ROWID, not enough ROWID values. Using single-threaded extract.")
-                extract.predicates = None
-                extract.partition_column = None
-                extract.partitions = None
-            else:
-                predicates = []
-                for dic in slices:
-                    # logger.debug(
-                    # f"ROWID >= '{dic['bound1']}' AND ROWID <= '{dic['bound2']}'")
-                    predicates.append(
-                        f"ROWID >= '{dic['bound1']}' AND ROWID <= '{dic['bound2']}'")
+            extract.predicates = predicates
+            extract.partition_column = "ROWID"
+            extract.partitions = partitions
+            logger.info(
+                f"{extract.name} using predicate partitioning on ROWID ({len(predicates)} partitions)")
 
-                extract.predicates = predicates
-                extract.partition_column = "ROWID"
-                extract.partitions = partitions
-                logger.info(
-                    f"{extract.name} using predicate partitioning on ROWID ({partitions} partitions)")
+        logger.debug(f"introspect_oracle extract.rows: {extract.rows}, extract.partitions: {len(predicates)}, self.config.default_rows_per_partition: {self.config.default_rows_per_partition}")
 
         now = datetime.now()
         extract.introspect_date = now
@@ -554,6 +607,7 @@ class Pipeline:
 
         # spark.sparkContext.setJobGroup(table.name, "full extract")
         if extract.predicates is not None and len(extract.predicates) > 0:
+            #predicate_number = len(extract.predicates)
             session.sparkContext.setJobDescription(
                 f'{extract.name} ({len(extract.predicates)} predicates)')
             df = session.read.jdbc(
