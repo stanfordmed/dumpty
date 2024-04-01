@@ -433,7 +433,7 @@ class Pipeline:
             # The table was partitioned or subpartitioned in database
             if self._table_partitioned(table):
                 logger.debug(
-                    f"Julienning {table.name} on with existing partitions and default chuncks 10")
+                    f"Julienning {table.name} on with existing partitions and default chuncks 20")
                 sql = text(f"""select min_rid, max_rid
                         from
                         (select distinct NVL(dba_tab_subpartitions.SUBPARTITION_NAME, dba_tab_partitions.PARTITION_NAME) as subject_name, dba_tab_partitions.table_name  from dba_tab_partitions
@@ -461,7 +461,7 @@ class Pipeline:
                                         block_id,
                                         blocks,
                                         trunc( (sum(blocks) over (order by relative_fno, block_id)-0.01) /
-                                        (sum(blocks) over ()/10) ) grp
+                                        (sum(blocks) over ()/20) ) grp
                                 from		dba_extents
                                 where	segment_name = upper('{table.name}')
                                 and		owner = '{self.config.schema}'
