@@ -541,7 +541,7 @@ class Pipeline:
                 result = session.execute(
                     f"SELECT NUM_ROWS FROM all_tables where TABLE_NAME='{extract.name}' AND OWNER='{self.config.schema}'").fetchall()
                 logger.debug(
-                    f"fast counting result of {result[0][0]}")
+                    f"{extract.name} fast counting result of {result[0][0]}")
                 extract.rows = result[0][0]
         if self.config.fastcount == False or extract.rows is None:
             logger.debug(f"Getting count(*) of {extract.name}")
@@ -557,7 +557,7 @@ class Pipeline:
 
         partitions = round(extract.rows / self.config.default_rows_per_partition)
         
-        logger.debug(f"ETA partitions#: {partitions}")
+        # logger.debug(f"ETA partitions#: {partitions}")
         if partitions > 1:
             extract.partitions = partitions
             slice_width = ceil(extract.rows / extract.partitions)
@@ -573,8 +573,8 @@ class Pipeline:
             # else:
             predicates = []
             for dic in slices:
-                logger.debug(
-                    f"ROWID >= '{dic['bound1']}' AND ROWID <= '{dic['bound2']}'")
+                # logger.debug(
+                #     f"{extract.name} ROWID >= '{dic['bound1']}' AND ROWID <= '{dic['bound2']}'")
                 predicates.append(
                     f"ROWID >= '{dic['bound1']}' AND ROWID <= '{dic['bound2']}'")
 
@@ -584,7 +584,7 @@ class Pipeline:
             logger.info(
                 f"{extract.name} using predicate partitioning on ROWID ({len(predicates)} partitions)")
 
-        logger.debug(f"introspect_oracle extract.rows: {extract.rows}, extract.partitions: {len(predicates)}, self.config.default_rows_per_partition: {self.config.default_rows_per_partition}")
+            logger.debug(f"introspect_oracle table {extract.name} extract.rows: {extract.rows}, extract.partitions: {len(predicates)}, self.config.default_rows_per_partition: {self.config.default_rows_per_partition}")
 
         now = datetime.now()
         extract.introspect_date = now
