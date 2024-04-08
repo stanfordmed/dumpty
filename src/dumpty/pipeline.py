@@ -168,6 +168,7 @@ class Pipeline:
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
+        # sleep(36000)
         self._spark_session.stop()
 
     @staticmethod
@@ -226,6 +227,7 @@ class Pipeline:
         self.introspect_workers.shutdown()
         self.extract_workers.shutdown()
         self.load_workers.shutdown()
+        # sleep(36000)
         self._spark_session.stop()
 
     def status(self) -> str:
@@ -424,16 +426,26 @@ class Pipeline:
                 return True
         return False
 
+    def _table_subpartitioned(self, table: Table):
+        with Session(self.engine) as session:
+            sql = text(f"""select count(*)  from dba_tab_subpartitions
+                            where	table_owner='{self.config.schema}'
+                            and		table_name='{table.name}'""")
+            result = session.execute(sql)
+            if int(result.fetchone()[0]) > 0:
+                return True
+        return False
+
     def _julienne_oracle(self, table: Table, width: int, partitions: int):
         logger.debug(
             f"Julienning {table.name} on ROWID into {width}-row slices")
         result_list_of_dict = []
         
         with Session(self.engine) as session:
-            # The table was partitioned or subpartitioned in database
-            if self._table_partitioned(table):
+            # The table was subpartitioned in database
+            if self._table_partitioned(table) and self._table_subpartitioned(table):
                 logger.debug(
-                    f"Julienning {table.name} on with existing partitions and default chuncks 20")
+                    f"Julienning subpartitioned table {table.name} on with default chuncks 20")
                 sql = text(f"""select min_rid, max_rid
                         from
                         (select distinct NVL(dba_tab_subpartitions.SUBPARTITION_NAME, dba_tab_partitions.PARTITION_NAME) as subject_name, dba_tab_partitions.table_name  from dba_tab_partitions
@@ -461,7 +473,52 @@ class Pipeline:
                                         block_id,
                                         blocks,
                                         trunc( (sum(blocks) over (order by relative_fno, block_id)-0.01) /
-                                        (sum(blocks) over ()/20) ) grp
+                                        (sum(blocks) over ()/4) ) grp
+                                from		dba_extents
+                                where	segment_name = upper('{table.name}')
+                                and		owner = '{self.config.schema}'
+                                order by block_id)
+                                ),
+                                (select data_object_id, subobject_name, object_name from dba_objects
+                                where	object_name = upper('{table.name}')
+                                and	owner='{self.config.schema}')) create_predicate on create_predicate.subobject_name=current_partition.subject_name""")
+                result = session.execute(sql)
+                for (col1, col2) in result.all():
+                    # logger.debug(
+                    #         f"Julienning {table.name} to predicate: {col1} - {col2}")
+                    result_list_of_dict.append({'bound1': col1, 'bound2': col2})
+
+            # The table was partitioned in database
+            elif self._table_partitioned(table):
+                logger.debug(
+                    f"Julienning partitioned table {table.name} on with default chuncks 4")
+                sql = text(f"""select min_rid, max_rid
+                        from
+                        (select distinct dba_tab_partitions.PARTITION_NAME as subject_name, dba_tab_partitions.table_name
+                                from dba_tab_partitions
+                            where dba_tab_partitions.table_owner = '{self.config.schema}' and dba_tab_partitions.table_name = upper('{table.name}')
+                            ) current_partition
+                        join (
+                        select    subobject_name,
+                                    dbms_rowid.rowid_create( 1, data_object_id, lo_fno, lo_block, 0 ) min_rid,
+                                dbms_rowid.rowid_create( 1, data_object_id, hi_fno, hi_block, 10000 ) max_rid
+                                from (
+                                select distinct grp,
+                                first_value(relative_fno) over (partition by grp order by relative_fno,
+                                block_id rows between unbounded preceding and unbounded following) lo_fno,
+                                first_value(block_id) over (partition by grp order by relative_fno,
+                                block_id rows between unbounded preceding and unbounded following) lo_block,
+                                last_value(relative_fno) over (partition by grp order by relative_fno,
+                                block_id rows between unbounded preceding and unbounded following) hi_fno,
+                                last_value(block_id+blocks-1) over (partition by grp order by relative_fno,
+                                block_id rows between unbounded preceding and unbounded following) hi_block,
+                                sum(blocks) over (partition by grp) sum_blocks
+                                from (
+                                select	relative_fno,
+                                        block_id,
+                                        blocks,
+                                        trunc( (sum(blocks) over (order by relative_fno, block_id)-0.01) /
+                                        (sum(blocks) over ()/4) ) grp
                                 from		dba_extents
                                 where	segment_name = upper('{table.name}')
                                 and		owner = '{self.config.schema}'
