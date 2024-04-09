@@ -585,63 +585,64 @@ class Pipeline:
         # Create BQ schema definition
         extract.bq_schema = self.bq_schema(table)
 
-        # Never been introspected, or partitioning was modified from prior run 
-        full_introspect = True 
-        logger.debug(
-                f"{'Deep' if full_introspect else 'Fast'} introspecting {extract.name}")
-        
-        # Get rowcount
-        count_fn = func.count
-        
-        if self.config.fastcount:
-            with Session(self.engine) as session:
-                result = session.execute(
-                    f"SELECT NUM_ROWS FROM all_tables where TABLE_NAME='{extract.name}' AND OWNER='{self.config.schema}'").fetchall()
-                logger.debug(
-                    f"{extract.name} fast counting result of {result[0][0]}")
-                extract.rows = result[0][0]
-        if self.config.fastcount == False or extract.rows is None:
-            logger.debug(f"Getting count(*) of {extract.name}")
-            with Session(self.engine) as session:
-                qry = session.query(
-                                    count_fn(literal_column("*")).label("count")
-                                ).select_from(table)
-                extract.rows = qry.scalar()
-        
-        # Continue with full introspection, reset partitioning
-        extract.partition_column = None
-        extract.predicates = None
+        if self.config.schemaonly == False:
+            # Never been introspected, or partitioning was modified from prior run 
+            full_introspect = True 
+            logger.debug(
+                    f"{'Deep' if full_introspect else 'Fast'} introspecting {extract.name}")
+            
+            # Get rowcount
+            count_fn = func.count
+            
+            if self.config.fastcount:
+                with Session(self.engine) as session:
+                    result = session.execute(
+                        f"SELECT NUM_ROWS FROM all_tables where TABLE_NAME='{extract.name}' AND OWNER='{self.config.schema}'").fetchall()
+                    logger.debug(
+                        f"{extract.name} fast counting result of {result[0][0]}")
+                    extract.rows = result[0][0]
+            if self.config.fastcount == False or extract.rows is None:
+                logger.debug(f"Getting count(*) of {extract.name}")
+                with Session(self.engine) as session:
+                    qry = session.query(
+                                        count_fn(literal_column("*")).label("count")
+                                    ).select_from(table)
+                    extract.rows = qry.scalar()
+            
+            # Continue with full introspection, reset partitioning
+            extract.partition_column = None
+            extract.predicates = None
 
-        partitions = round(extract.rows / self.config.default_rows_per_partition)
-        
-        # logger.debug(f"ETA partitions#: {partitions}")
-        if partitions > 1:
-            extract.partitions = partitions
-            slice_width = ceil(extract.rows / extract.partitions)
+            partitions = round(extract.rows / self.config.default_rows_per_partition)
+            
+            # logger.debug(f"ETA partitions#: {partitions}")
+            if partitions > 1:
+                extract.partitions = partitions
+                slice_width = ceil(extract.rows / extract.partitions)
 
-            slices = self._julienne_oracle(table, slice_width, partitions) # return pairs of ROWIDs
+                slices = self._julienne_oracle(table, slice_width, partitions) # return pairs of ROWIDs
 
-            # if len(slices) / partitions < 0.10:
-            #     logger.warning(
-            #         f"Failed to Julienne {extract.name} on ROWID, not enough ROWID values. Using single-threaded extract.")
-            #     extract.predicates = None
-            #     extract.partition_column = None
-            #     extract.partitions = None
-            # else:
-            predicates = []
-            for dic in slices:
-                # logger.debug(
-                #     f"{extract.name} ROWID >= '{dic['bound1']}' AND ROWID <= '{dic['bound2']}'")
-                predicates.append(
-                    f"ROWID >= '{dic['bound1']}' AND ROWID <= '{dic['bound2']}'")
+                # if len(slices) / partitions < 0.10:
+                #     logger.warning(
+                #         f"Failed to Julienne {extract.name} on ROWID, not enough ROWID values. Using single-threaded extract.")
+                #     extract.predicates = None
+                #     extract.partition_column = None
+                #     extract.partitions = None
+                # else:
+                predicates = []
+                for dic in slices:
+                    # logger.debug(
+                    #     f"{extract.name} ROWID >= '{dic['bound1']}' AND ROWID <= '{dic['bound2']}'")
+                    predicates.append(
+                        f"ROWID >= '{dic['bound1']}' AND ROWID <= '{dic['bound2']}'")
 
-            extract.predicates = predicates
-            extract.partition_column = "ROWID"
-            extract.partitions = partitions
-            logger.info(
-                f"{extract.name} using predicate partitioning on ROWID ({len(predicates)} partitions)")
+                extract.predicates = predicates
+                extract.partition_column = "ROWID"
+                extract.partitions = partitions
+                logger.info(
+                    f"{extract.name} using predicate partitioning on ROWID ({len(predicates)} partitions)")
 
-            logger.debug(f"introspect_oracle table {extract.name} extract.rows: {extract.rows}, extract.partitions: {len(predicates)}, self.config.default_rows_per_partition: {self.config.default_rows_per_partition}")
+                logger.debug(f"introspect_oracle table {extract.name} extract.rows: {extract.rows}, extract.partitions: {len(predicates)}, self.config.default_rows_per_partition: {self.config.default_rows_per_partition}")
 
         now = datetime.now()
         extract.introspect_date = now
@@ -732,7 +733,7 @@ class Pipeline:
             # Nothing to do here
             return extract
 
-        if self.config.target_uri is not None:
+        if self.config.schemaonly == False and self.config.target_uri is not None:
             extract_uri = self._extract(extract, self.config.target_uri)
             extract.extract_uri = extract_uri
             extract.extract_date = datetime.now()
