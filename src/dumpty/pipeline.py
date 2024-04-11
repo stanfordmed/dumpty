@@ -445,7 +445,7 @@ class Pipeline:
             # The table was subpartitioned in database
             if self._table_partitioned(table) and self._table_subpartitioned(table):
                 logger.debug(
-                    f"Julienning subpartitioned table {table.name} on with default chuncks 20")
+                    f"Julienning subpartitioned table {table.name} on with default chuncks 6")
                 sql = text(f"""select min_rid, max_rid
                         from
                         (select distinct NVL(dba_tab_subpartitions.SUBPARTITION_NAME, dba_tab_partitions.PARTITION_NAME) as subject_name, dba_tab_partitions.table_name  from dba_tab_partitions
@@ -473,7 +473,7 @@ class Pipeline:
                                         block_id,
                                         blocks,
                                         trunc( (sum(blocks) over (order by relative_fno, block_id)-0.01) /
-                                        (sum(blocks) over ()/4) ) grp
+                                        (sum(blocks) over ()/6) ) grp
                                 from		dba_extents
                                 where	segment_name = upper('{table.name}')
                                 and		owner = '{self.config.schema}'
@@ -491,7 +491,7 @@ class Pipeline:
             # The table was partitioned in database
             elif self._table_partitioned(table):
                 logger.debug(
-                    f"Julienning partitioned table {table.name} on with default chuncks 4")
+                    f"Julienning partitioned table {table.name} on with default chuncks 6")
                 sql = text(f"""select min_rid, max_rid
                         from
                         (select distinct dba_tab_partitions.PARTITION_NAME as subject_name, dba_tab_partitions.table_name
@@ -518,7 +518,7 @@ class Pipeline:
                                         block_id,
                                         blocks,
                                         trunc( (sum(blocks) over (order by relative_fno, block_id)-0.01) /
-                                        (sum(blocks) over ()/4) ) grp
+                                        (sum(blocks) over ()/6) ) grp
                                 from		dba_extents
                                 where	segment_name = upper('{table.name}')
                                 and		owner = '{self.config.schema}'
