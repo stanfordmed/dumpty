@@ -28,7 +28,6 @@ from dumpty.extract import Extract
 from dumpty.gcp import GCP
 from dumpty.util import normalize_str, count_big
 
-
 @dataclass
 class Step:
     """Initialize a :class:`.Step` instance. 
@@ -130,6 +129,7 @@ class Pipeline:
         self.introspect_queue = Queue(config.introspect_workers)
         self.extract_queue = Queue(config.extract_workers)
         self.load_queue = Queue(config.load_workers)
+        
         self.done_queue = Queue()
         self.error_queue = Queue()
 
@@ -147,7 +147,7 @@ class Pipeline:
 
         load_step = Step(self.load, self.load_queue,
                         self.done_queue, self.error_queue)
-
+        
         self.introspect_workers = QueueWorkerPool(
             introspect_step, self.introspect_queue.maxsize)
 
@@ -155,7 +155,7 @@ class Pipeline:
             extract_step, self.extract_queue.maxsize)
 
         self.load_workers = QueueWorkerPool(load_step, self.load_queue.maxsize)
-
+       
     def __enter__(self):
         ctx = SparkSession\
             .builder\
@@ -484,8 +484,6 @@ class Pipeline:
                                 and	owner='{self.config.schema}')) create_predicate on create_predicate.subobject_name=current_partition.subject_name""")
                 result = session.execute(sql)
                 for (col1, col2) in result.all():
-                    # logger.debug(
-                    #         f"Julienning {table.name} to predicate: {col1} - {col2}")
                     result_list_of_dict.append({'bound1': col1, 'bound2': col2})
 
             # The table was partitioned in database
@@ -529,8 +527,6 @@ class Pipeline:
                                 and	owner='{self.config.schema}')) create_predicate on create_predicate.subobject_name=current_partition.subject_name""")
                 result = session.execute(sql)
                 for (col1, col2) in result.all():
-                    # logger.debug(
-                    #         f"Julienning {table.name} to predicate: {col1} - {col2}")
                     result_list_of_dict.append({'bound1': col1, 'bound2': col2})
 
             # For non-partitioned table
@@ -615,24 +611,14 @@ class Pipeline:
 
             partitions = round(extract.rows / self.config.default_rows_per_partition)
             
-            # logger.debug(f"ETA partitions#: {partitions}")
             if partitions > 1:
                 extract.partitions = partitions
                 slice_width = ceil(extract.rows / extract.partitions)
 
                 slices = self._julienne_oracle(table, slice_width, partitions) # return pairs of ROWIDs
 
-                # if len(slices) / partitions < 0.10:
-                #     logger.warning(
-                #         f"Failed to Julienne {extract.name} on ROWID, not enough ROWID values. Using single-threaded extract.")
-                #     extract.predicates = None
-                #     extract.partition_column = None
-                #     extract.partitions = None
-                # else:
                 predicates = []
                 for dic in slices:
-                    # logger.debug(
-                    #     f"{extract.name} ROWID >= '{dic['bound1']}' AND ROWID <= '{dic['bound2']}'")
                     predicates.append(
                         f"ROWID >= '{dic['bound1']}' AND ROWID <= '{dic['bound2']}'")
 
@@ -806,7 +792,8 @@ class Pipeline:
                 extract.bq_bytes = 0
 
         return extract
-
+    
+    
     def reconcile(self, table_names: List[str]):
         """Checks if a list of table names exist in TinyDB and SQL database
             :param table_names: List of table names to validate against database

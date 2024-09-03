@@ -18,14 +18,14 @@ from dumpty.extract import Extract, ExtractDB
 from dumpty.pipeline import Pipeline
 from dumpty.util import filter_shuffle
 from google.api_core.exceptions import BadRequest
-from jinja2 import Environment, FileSystemLoader, Template
+from jinja2 import Environment, FileSystemLoader, Template, PackageLoader
 from sqlalchemy import create_engine
 from tenacity import (Retrying, after_log, retry_if_not_exception_type,
                       stop_after_attempt, stop_after_delay,
                       wait_random_exponential)
 
 from dumpty import logger
-
+from dumpty.gcp import GCP
 
 def config_from_args(argv) -> Config:
     parser = argparse.ArgumentParser(
@@ -147,6 +147,25 @@ def config_from_args(argv) -> Config:
         os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = config.credentials
 
     return config
+
+# Create views
+def create_view(config: Config):
+    """
+        Create views.
+    """
+    env: Environment = Environment(loader=PackageLoader("dumpty", "sql"))
+    vars = {
+        "target_dataset": config.target_dataset,
+    }
+    view_list = config.views
+    gcp = GCP()
+    logger.info("Total number of views in YAML: %d", len(view_list))
+    for view in view_list:
+        template: Template = env.get_template(view["file"])
+        sql = template.render(vars | view)
+        logger.info("Creating view in BigQuery {0} from file {1} {2}".format(view["name"], view["file"], sql))
+        gcp.bigquery_create_view(
+                    "{0}.{1}".format(config.target_dataset, view["name"]), sql)
 
 
 def main(args=None):
@@ -329,6 +348,9 @@ def main(args=None):
 
             db.close()
             logger.info("DATA EXTRACTION IS DONE!!!")
+    
+    # Create views
+    create_view(config)
     
     # Summarize
     summary['end_date'] = datetime.now()
