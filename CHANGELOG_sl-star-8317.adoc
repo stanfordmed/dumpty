@@ -1,0 +1,1 @@
+* ({uri-jira}/STAR-8317[STAR-8317]) - Dumpty retries WAY too hard when it fails to connect to dataset etc, updated the re-try timeout to be 30 mins instead of 2 hours
