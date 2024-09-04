@@ -1,0 +1,107 @@
+spark: 
+  threads: 8
+  format: "json"
+  compression: "gzip"
+  normalize_schema: "true"
+  timestamp_format: "yyyy-MM-dd HH:mm:ss"
+  properties:
+    spark.ui.showConsoleProgress: "false"
+    spark.default.parallelism: "8"
+    spark.eventLog.enabled: "false"
+    spark.eventLog.dir: "spark_log"
+    spark.driver.extraClassPath: "spark-hadoop-cloud_2.12-3.3.2.jar:ojdbc8.jar:gcs-connector-hadoop3-2.2.12-shaded.jar:spark-3.1-bigquery-0.28.0-preview.jar:hadoop-client-api-3.3.5.jar:hadoop-client-runtime-3.3.5.jar"
+    spark.sql.session.timeZone: "America/Los_Angeles"
+    spark.sql.jsonGenerator.ignoreNullFields": "false"
+    spark.sql.debug.maxToStringFields: "25"
+    #spark.dynamicAllocation.enabled: "true"
+    #spark.dynamicAllocation.minExecutors: "1"
+    #spark.dynamicAllocation.maxExecutors: "4"
+    spark.hadoop.google.cloud.auth.service.account.enable: "true"
+    spark.hadoop.google.cloud.auth.service.account.json.keyfile: "key.json"
+    # NOTE: Below require Hadoop 3.3.5+ jars
+    # https://hadoop.apache.org/docs/r3.3.5/hadoop-mapreduce-client/hadoop-mapreduce-client-core/manifest_committer.html
+    # v1 committer is very slow, v2 is not safe for GCS. This one is supposed to be safe.
+    spark.hadoop.mapreduce.outputcommitter.factory.scheme.gcs: "org.apache.hadoop.mapreduce.lib.output.committer.manifest.ManifestCommitterFactory"
+    spark.hadoop.mapreduce.outputcommitter.factory.scheme.gs: "org.apache.hadoop.mapreduce.lib.output.committer.manifest.ManifestCommitterFactory"
+    spark.hadoop.mapreduce.manifest.committer.delete.target.files: "true"
+    spark.sql.parquet.output.committer.class: "org.apache.spark.internal.io.cloud.BindingParquetOutputCommitter"
+    spark.sql.sources.commitProtocolClass: "org.apache.spark.internal.io.cloud.PathOutputCommitProtocol"
+    spark.executor.memory: "8g"
+    spark.driver.memory: "16g"
+    # Change to G1GC prevents GC slowdowns entirely
+    spark.executor.defaultJavaOptions: "-XX:+UseG1GC"
+    spark.driver.defaultJavaOptions: "-XX:+UseG1GC"
+    spark.storage.memoryFraction: "0"
+    spark.sql.debug.maxToStringFields: "500"
+sqlalchemy:
+  url: "oracle://USERNAME:PASSWORD@DBHOSTNAME:PORT?service_name=DATABASE"
+jdbc:
+  url: "jdbc:oracle:thin:@HOSTNAME:PORT:DATABASE"
+  properties:
+    user: USERNAME
+    password: "PASSWORD"
+    driver: "oracle.jdbc.driver.OracleDriver"
+    fetchsize: "1000"
+    sessionInitStatement: "BEGIN execute immediate 'alter session set \"_serial_direct_read\"=true'; END;"
+    customSchema: "bpa_ack_lockout_tm_float Double"
+
+# Your target file size for Spark output files
+target_partition_size_bytes: 52428800
+
+# First-pass introspection will use this value to determine partition size
+default_rows_per_partition: 1000000
+
+tinydb_database_file: tinydb.json
+
+# Introspection expires after this many seconds since last
+introspection_expire_s: 604800
+
+# Controls parallelism of SQL introspection workers (one SQL connection per worker)
+# note: introspect_workers + spark.threads = total parallel SQL queries
+introspect_workers: 8
+
+# No more than this number of Spark jobs will be in 'running' state.
+extract_workers: 8
+
+# Controls parallelism of BigQuery load operations 
+load_workers: 8
+
+# GCS bucket URI for extrated tables
+target_uri: gs://bucket/path
+
+# project_id.dataset to create
+target_dataset: my_project_id.my_dataset_id
+
+# Access entries at dataset creation time. You will want to include the service account here!
+target_dataset_access_entries:
+  - role: "OWNER"
+    userByEmail: "etl@my_project.iam.gserviceaccount.com"
+  - role: "OWNER"
+    userByEmail: "dba@somewhere.com"
+
+# Additional access entries to grant when dataset has completed loading
+target_dataset_additional_access_entries:
+  - role: "READER"
+    userByEmail: "reader@somewhere.com"
+
+# Labels to apply at dataset creation time
+target_dataset_pre_labels:
+  loading: true
+
+# Labels to apply when dataset has completed loading
+target_dataset_post_labels:
+  loading: false
+
+# Delete the dataset before extracting
+drop_dataset: false
+
+# Retry GCP functions that fail
+retry: false
+
+# Source database schema name
+schema: dbo
+
+# Tables to extract from above schema
+tables: 
+  - REPORTS
+  - LOGS

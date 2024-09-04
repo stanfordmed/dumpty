@@ -3,6 +3,8 @@ import json
 import logging
 import os
 import sys
+import oracledb
+
 from datetime import date, datetime
 from pathlib import Path
 from queue import Empty
@@ -16,7 +18,7 @@ from dumpty.extract import Extract, ExtractDB
 from dumpty.pipeline import Pipeline
 from dumpty.util import filter_shuffle
 from google.api_core.exceptions import BadRequest
-from jinja2 import Environment, FileSystemLoader, Template
+from jinja2 import Environment, FileSystemLoader, Template, PackageLoader
 from sqlalchemy import create_engine
 from tenacity import (
     Retrying,
@@ -28,7 +30,7 @@ from tenacity import (
 )
 
 from dumpty import logger
-
+from dumpty.gcp import GCP
 
 def config_from_args(argv) -> Config:
     parser = argparse.ArgumentParser(
@@ -94,16 +96,14 @@ def config_from_args(argv) -> Config:
         default="config.yaml",
     )
 
-    parser.add_argument(
-        "--logfile", type=str, help="JSON log filename (default: extract.json)"
-    )
+    parser.add_argument('--logfile', type=str,
+                        help='JSON log filename (default: extract.json)')
 
-    parser.add_argument(
-        "--fastcount",
-        action="store_const",
-        const=True,
-        help="Rowcount for MSSQL tables with store procedure sp_spaceused",
-    )
+    parser.add_argument('--fastcount', action="store_const", const=True,
+                        help='Rowcount for MSSQL tables with store procedure sp_spaceused')
+    
+    parser.add_argument('--schemaonly', action="store_const", const=True,
+                        help='Create dataset and table schema only')
 
     parser.add_argument(
         "--parse",
@@ -156,7 +156,10 @@ def config_from_args(argv) -> Config:
     db.close()
     # ADD THE LAST SUCCESSFUL RUN DATE TO THE SQL QUERY
     config.last_successful_run = last_successful_run
-    query = config.tables_query.replace("last_successful_run", last_successful_run)
+    if last_successful_run != None and config.tables_query != None:
+        query = config.tables_query.replace("last_successful_run", last_successful_run)
+    else:
+        query = config.tables_query
     config.tables_query = query
 
     # Command line args override config file
@@ -178,6 +181,8 @@ def config_from_args(argv) -> Config:
         config.credentials = args.credentials
     if args.fastcount is not None:
         config.fastcount = True
+    if args.schemaonly is not None:
+        config.schemaonly = True
 
     if args.extract is not None:
         config.extract = args.extract
@@ -198,6 +203,25 @@ def config_from_args(argv) -> Config:
         os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = config.credentials
 
     return config
+
+# Create views
+def create_view(config: Config):
+    """
+        Create views.
+    """
+    env: Environment = Environment(loader=PackageLoader("dumpty", "sql"))
+    vars = {
+        "target_dataset": config.target_dataset,
+    }
+    view_list = config.views
+    gcp = GCP()
+    logger.info("Total number of views in YAML: %d", len(view_list))
+    for view in view_list:
+        template: Template = env.get_template(view["file"])
+        sql = template.render(vars | view)
+        logger.info("Creating view in BigQuery {0} from file {1} {2}".format(view["name"], view["file"], sql))
+        gcp.bigquery_create_view(
+                    "{0}.{1}".format(config.target_dataset, view["name"]), sql)
 
 
 def main(args=None):
@@ -254,15 +278,14 @@ def main(args=None):
     completed: List[Extract] = []
 
     # Initialize SqlAlchemy
-    engine = create_engine(
-        config.sqlalchemy.url,
-        pool_size=config.introspect_workers,
-        connect_args=config.sqlalchemy.connect_args,
-        pool_pre_ping=True,
-        max_overflow=config.introspect_workers,
-        isolation_level=config.sqlalchemy.isolation_level,
-        echo=False,
-    )
+    if config.sqlalchemy.url.startswith("oracle"):
+        oracledb.version = "8.3.0"
+        sys.modules["cx_Oracle"] = oracledb
+        engine = create_engine(config.sqlalchemy.url, pool_size=config.introspect_workers,
+                               pool_pre_ping=True, max_overflow=config.introspect_workers, echo=False)
+    else:
+        engine = create_engine(config.sqlalchemy.url, pool_size=config.introspect_workers, connect_args=config.sqlalchemy.connect_args,
+                               pool_pre_ping=True, max_overflow=config.introspect_workers, isolation_level=config.sqlalchemy.isolation_level, echo=False)
 
     failed = False
 
@@ -431,7 +454,10 @@ def main(args=None):
 
             db.close()
             logger.info("DATA EXTRACTION IS DONE!!!")
-
+    
+    # Create views
+    create_view(config)
+    
     # Summarize
     summary["end_date"] = datetime.now()
     summary["elapsed_s"] = round(

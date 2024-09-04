@@ -26,7 +26,6 @@ class JdbcConfig:
     url: str
     properties: Dict
 
-
 @dataclass
 class Config(YAMLWizard):
     spark: SparkConfig
@@ -35,6 +34,7 @@ class Config(YAMLWizard):
 
     schema: str
     tables: List[str]
+    views: List[dict]
 
     credentials: str = None
 
@@ -57,6 +57,7 @@ class Config(YAMLWizard):
     introspect_workers: int = 8
     extract_workers: int = 8
     load_workers: int = 32
+    create_views_workers: int = 8
     drop_dataset: bool = False
     normalize_schema: bool = True
     last_successful_run: str = None
@@ -69,4 +70,5 @@ class Config(YAMLWizard):
     retry: bool = False
     reconcile: bool = False
     fastcount: bool = False
+    schemaonly: bool = False
     progress_bar: bool = True

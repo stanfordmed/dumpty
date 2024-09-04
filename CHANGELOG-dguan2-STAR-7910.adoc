@@ -1,0 +1,1 @@
+* ({uri-jira}/STAR-7910[STAR-7910]) - Implement ROWID optimization in Dumpty
