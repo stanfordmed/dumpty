@@ -350,7 +350,7 @@ class Pipeline:
                     extract.rows = res.count
                 else:
                     logger.debug(f"Getting count(*) of {extract.name}")
-                    if self.config.fastcount:
+                    if self.config.fastcount and not extract.name.startswith("vv_"):
                         result = session.execute(
                             
                         f"EXEC sp_spaceused N'{self.config.schema}.{extract.name}';").fetchall()
@@ -808,3 +808,18 @@ class Pipeline:
         if len(not_found) > 0:
             raise ValidationException(
                 f"Could not find these tables in {self.config.schema}: {','.join(not_found)}")
+
+    def reconcile_view(self, view_names: List[str]):
+        """Checks if a list of view names exist in TinyDB and SQL database
+            :param view_names: List of view names to validate against database
+            :raises: :class:`.ValidationException` when a view is not found. Use this
+            to fail early if you are not sure if the views are actually in the SQL database.
+        """
+        logger.info(
+            f"Reconciling list of views against schema {self.config.schema}")
+        sql_views = self._inspector.get_view_names(schema=self.config.schema)
+        not_found = [t["name"] for t in view_names if t["name"].lower() not in (
+            view.lower() for view in sql_views)]
+        if len(not_found) > 0:
+            raise ValidationException(
+                f"Could not find these views in {self.config.schema}: {','.join(not_found)}")

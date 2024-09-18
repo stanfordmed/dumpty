@@ -34,7 +34,7 @@ class Config(YAMLWizard):
 
     schema: str
     tables: List[str]
-    views: List[dict]
+    views: List[dict] = None
 
     credentials: str = None
 
