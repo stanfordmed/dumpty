@@ -350,18 +350,18 @@ class Pipeline:
                     extract.rows = res.count
                 else:
                     logger.debug(f"Getting count(*) of {extract.name}")
-                    if self.config.fastcount and not extract.name.startswith("vv_"):
-                        result = session.execute(
-                            
-                        f"EXEC sp_spaceused N'{self.config.schema}.{extract.name}';").fetchall()
-                        logger.debug(
-                        f"fast counting result of {result[0][1].rstrip()}")
-                        extract.rows = int(result[0][1].rstrip())
-                    else:
-                        qry = session.query(
-                            count_fn(literal_column("*")).label("count")
-                        ).select_from(table)
-                        extract.rows = qry.scalar()
+                    if not extract.name.startswith("vv_"):
+                        if self.config.fastcount:
+                            result = session.execute(
+                            f"EXEC sp_spaceused N'{self.config.schema}.{extract.name}';").fetchall()
+                            logger.debug(
+                            f"fast counting result of {result[0][1].rstrip()}")
+                            extract.rows = int(result[0][1].rstrip())
+                        else:
+                            qry = session.query(
+                                count_fn(literal_column("*")).label("count")
+                            ).select_from(table)
+                            extract.rows = qry.scalar()
 
             if not full_introspect:
                 # Stop here if this table was already introspected recently
