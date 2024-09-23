@@ -73,3 +73,16 @@ extract_workers: 64
 load_workers: {{BQ_LOAD_THREADS}}
 
 log_file: {{EXTRACT_LOG_FILE}}
+
+# Source database schema name
+schema: dbo
+
+# Tables to extract from above schema
+tables: 
+  - REPORTS
+  - LOGS
+views:
+  - name: VIEW_MAT
+    materialized: true
+  - name: VIEW_SQL
+    file: vv_Example.sql

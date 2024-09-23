@@ -1,0 +1,1 @@
+* ({uri-jira}/STAR-8825[STAR-8825]) - Materialize view data to table option for Dumpty

@@ -204,7 +204,7 @@ def config_from_args(argv) -> Config:
 
     return config
 
-# Create views
+# Create views (non-materialized) with definition SQL file
 def create_view(config: Config):
     """
         Create views.
@@ -217,11 +217,12 @@ def create_view(config: Config):
     gcp = GCP()
     logger.info("Total number of views in YAML: %d", len(view_list))
     for view in view_list:
-        template: Template = env.get_template(view["file"])
-        sql = template.render(vars | view)
-        logger.info("Creating view in BigQuery {0} from file {1} {2}".format(view["name"], view["file"], sql))
-        gcp.bigquery_create_view(
-                    "{0}.{1}".format(config.target_dataset, view["name"]), sql)
+        if "file" in view:
+            template: Template = env.get_template(view["file"])
+            sql = template.render(vars | view)
+            logger.info("Creating view in BigQuery {0} from file {1} {2}".format(view["name"], view["file"], sql))
+            gcp.bigquery_create_view(
+                        "{0}.{1}".format(config.target_dataset, view["name"]), sql)
 
 
 def main(args=None):
@@ -311,7 +312,10 @@ def main(args=None):
                 if config.reconcile:
                     # Check if tables being requested actually exist in SQL database before doing anything else
                     # This can be very slow for databases with thousands of tables so it is off by default
-                    pipeline.reconcile(config.tables)
+                    if config.tables is not None:
+                        pipeline.reconcile(config.tables)
+                    if config.views is not None:
+                        pipeline.reconcile_view(config.views)
 
                 """
                 STEPS:
@@ -324,6 +328,11 @@ def main(args=None):
 
                 table_list = config.tables
                 logger.info("Total number of tables in YAML: %d", len(table_list))
+
+                # Append materialized views to table list
+                for view in config.views:
+                    if view["materialized"]:
+                        table_list.append(view["name"])
 
                 if config.extract.strip() == "incremental":
 
@@ -456,7 +465,8 @@ def main(args=None):
             logger.info("DATA EXTRACTION IS DONE!!!")
     
     # Create views
-    create_view(config)
+    if config.views != None:
+        create_view(config)
     
     # Summarize
     summary["end_date"] = datetime.now()
