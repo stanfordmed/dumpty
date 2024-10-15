@@ -1,0 +1,1 @@
+* ({uri-jira}/STAR-9183[STAR-9183]) - Add nullify column option to Dumpty

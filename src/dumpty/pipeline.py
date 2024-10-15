@@ -172,6 +172,20 @@ class Pipeline:
         self._spark_session.stop()
 
     @staticmethod
+    def empty_cols(df: DataFrame, table_name: str, drop_cols: str) -> DataFrame:
+        drop_col_names: List[str] = []
+        for col_name in drop_cols.split(','):
+            if col_name.rsplit('.')[0].lower() == table_name.lower():
+                drop_col_names.append(col_name.rsplit('.')[-1])
+                # Dataframe drop doesn't work. When it saves the data, the columns still exists. e.g. df.drop(col_name.rsplit('.')[-1])
+                logger.info(
+                    f"Table {table_name} - Drop column: {col_name.rsplit('.')[-1]}")
+        if len(drop_col_names) > 0:
+            return df.select([c for c in df.columns if c not in drop_col_names])
+        else:
+            return df
+
+    @staticmethod
     def normalize_df(df: DataFrame) -> DataFrame:
         return df.select([col(x).alias(normalize_str(x)) for x in df.columns])
 
@@ -694,6 +708,9 @@ class Pipeline:
             # Normalize column names?
             df = self.normalize_df(df)
 
+        if self.config.empty_columns is not None:
+            df = self.empty_cols(df, extract.name, self.config.empty_columns)
+
         session.sparkContext.setLocalProperty("callSite.short", n_table_name)
         df.write.save(f"{uri}/{n_table_name}", format=self.config.spark.format, mode="overwrite",
                       timestampFormat=self.config.spark.timestamp_format, compression=self.config.spark.compression)
@@ -773,7 +790,7 @@ class Pipeline:
 
         # Load into BigQuery
         if self.config.target_dataset is not None:
-            if self.config.schemaonly == False and extract.rows > 0:
+            if self.config.schemaonly == False:
                 # Load from GCS into BQ
                 bq_rows: int = 0
                 bq_bytes: int = 0
