@@ -120,6 +120,13 @@ def config_from_args(argv) -> Config:
     )
 
     parser.add_argument(
+        "--empty_columns",
+        type=str,
+        default=None,
+        help="Empty the values of table columns (e.g. table1_name.field1_name,table2_name.field2_name)",
+    )
+
+    parser.add_argument(
         "dataset",
         type=str,
         nargs="?",
@@ -241,6 +248,7 @@ def main(args=None):
     logger.info("config.target_dataset_location: %s", config.target_dataset_location)
     logger.info("config.drop_dataset: %s", config.drop_dataset)
     logger.info("config.normalize_schema: %s", config.normalize_schema)
+    logger.info("config.empty_columns: %s", config.empty_columns)
     logger.info("config.extract: %s", config.extract)
     logger.info("config.last_successful_run: %s", config.last_successful_run)
     logger.info("config.tables_query: %s", config.tables_query)

@@ -60,6 +60,7 @@ class Config(YAMLWizard):
     create_views_workers: int = 8
     drop_dataset: bool = False
     normalize_schema: bool = True
+    empty_columns: str = None
     last_successful_run: str = None
     extract: str = None
     tables_query: str = None
