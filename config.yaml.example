@@ -76,7 +76,7 @@ log_file: {{EXTRACT_LOG_FILE}}
 
 # Source database schema name
 schema: dbo
-empty_columns: "patient.ssn"
+empty_columns: "patient.ssn,provider.dea"
 # Tables to extract from above schema
 tables: 
   - REPORTS
