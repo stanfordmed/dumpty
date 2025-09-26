@@ -10,6 +10,16 @@ endif::[]
 This document provides a high-level view of the changes introduced in DUMPTY by release.
 For a detailed view of what has changed, refer to the {uri-repo}/commits/main[commit history] on GitHub.
 
+== DUMPTY Release 2025-09-26 (v2.0.0)
+* ({uri-jira}/STAR-7131[STAR-7131]) - Add support for Oracle (Darren)
+* ({uri-jira}/STAR-7371[STAR-7371]) - Add a flag to create dataset and table schemas only (Darren)
+* ({uri-jira}/STAR-7910[STAR-7910]) - Implement ROWID optimization in Dumpty (Darren)
+* ({uri-jira}/STAR-8723[STAR-8723]) - Add Create View function to Dumpty for ARIA ETL (Darren)
+* ({uri-jira}/STAR-8825[STAR-8825]) - Materialize view data to table option for Dumpty for ARIA ETL (Darren)
+* ({uri-jira}/STAR-9183[STAR-9183]) - Add nullify column option to Dumpty for ARIA ETL (Darren)
+* ({uri-jira}/STAR-10838[STAR-10838]) - Infrastructure changes for on-premise LPCH Clarity Dumpty ETL (Deepa)
+* ({uri-jira}/STAR-8317[STAR-8317]) - Dumpty retries WAY too hard when it fails to connect to dataset etc, updated the re-try timeout to be 30 mins instead of 2 hours (Smita)
+
 == DUMPTY Release 2023-12-04 (v2.0.0)
 PHASE 1 of Incremental Clarity ETL for LPCH:
 * ({uri-jira}/STAR-6838[STAR-6838]) - Definition for Incremental Clarity ETL for LPCH Clarity + Build a PoC for couple of LPCH Clarity tables

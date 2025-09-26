@@ -1,2 +1,0 @@
-* ({uri-jira}/STAR-9183[STAR-9183]) - Add nullify column option to Dumpty
-* ({uri-jira}/STAR-10838[STAR-10838]) - Infrastructure changes for on-premise LPCH Clarity ETL (Dumpty)
