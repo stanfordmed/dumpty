@@ -1,0 +1,1 @@
+select * from  `{{ target_dataset }}`.doctor

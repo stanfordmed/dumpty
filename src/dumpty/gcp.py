@@ -1,4 +1,3 @@
-import json
 import os
 import re
 from pathlib import PurePath
@@ -12,7 +11,11 @@ from google.cloud.bigquery import (CreateDisposition, Dataset, AccessEntry,
 from google.cloud.exceptions import NotFound
 from google.cloud.storage import Blob, Bucket
 from google.cloud.storage import Client as StorageClient
+from google.cloud.bigquery import Client
+from google.cloud.bigquery import QueryJobConfig
+from google.cloud.bigquery import QueryPriority
 from google.cloud.bigquery.retry import DEFAULT_RETRY
+import google.api_core.exceptions as core_exceptions
 from dumpty import logger
 
 
@@ -115,6 +118,24 @@ class GCP:
             f"Creating empty table {table_ref.dataset_id}.{table_ref.table_id}")
         return self._bigquery_client.create_table(table_ref, exists_ok=True)
 
+    def bigquery_create_view(self, view_ref: str, sql: str, materialized: bool = False):
+        """
+        Creates a view in BigQuery
+        """
+        view: Table = Table(view_ref)
+        if materialized:
+            view.mview_query = sql
+        else:
+            view.view_query = sql
+        try:
+            return self._bigquery_client.create_table(view)
+        except core_exceptions.Conflict:
+            self._bigquery_client.delete_table(view, not_found_ok=True)
+            return self._bigquery_client.create_table(view)
+        except Exception as e:
+            logger.error(f"Exception creating view ${view} sql: ${sql}")
+            raise e
+
     def bigquery_apply_labels(self, dataset_ref: str, labels: dict):
         ref = DatasetReference.from_string(dataset_ref)
         dataset = self._bigquery_client.get_dataset(ref)
@@ -181,3 +202,25 @@ class GCP:
         load_job.result()
 
         return load_job.output_rows, load_job.output_bytes
+    
+    def bigquery_run_query(
+        self,
+        sql: str,
+        destination_table: TableReference,
+        writeDisposition: str = "CREATE_IF_NEEDED",
+        drop: bool = False,
+    ):
+        """Run query in BigQuery."""
+        job_config = QueryJobConfig(priority=QueryPriority.BATCH)
+        if destination_table is not None:
+            if drop:
+                self._bigquery_client.delete_table(destination_table, not_found_ok=True)
+            job_config.destination = destination_table
+            job_config.write_disposition = writeDisposition
+        try:
+            query_job = self._bigquery_client.query(sql, job_config=job_config)
+            return query_job.result()
+        except Exception as e:
+            raise e
+
+    
