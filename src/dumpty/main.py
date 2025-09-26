@@ -338,9 +338,10 @@ def main(args=None):
                 logger.info("Total number of tables in YAML: %d", len(table_list))
 
                 # Append materialized views to table list
-                for view in config.views:
-                    if view["materialized"]:
-                        table_list.append(view["name"])
+                if config.views is not None:
+                    for view in config.views:
+                        if view["materialized"]:
+                            table_list.append(view["name"])
 
                 if config.extract.strip() == "incremental":
 
