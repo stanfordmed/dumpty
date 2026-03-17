@@ -372,6 +372,20 @@ wheels = [
 ]
 
 [[package]]
+name = "docker"
+version = "7.1.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pywin32", marker = "sys_platform == 'win32'" },
+    { name = "requests" },
+    { name = "urllib3" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/91/9b/4a2ea29aeba62471211598dac5d96825bb49348fa07e906ea930394a83ce/docker-7.1.0.tar.gz", hash = "sha256:ad8c70e6e3f8926cb8a92619b832b4ea5299e2831c14284663184e200546fa6c", size = 117834, upload-time = "2024-05-23T11:13:57.216Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e3/26/57c6fb270950d476074c087527a558ccb6f4436657314bfb6cdf484114c4/docker-7.1.0-py3-none-any.whl", hash = "sha256:c96b93b7f0a746f9e77d325bcfb87422a3d8bd4f03136ae8a85b37f1898d5fc0", size = 147774, upload-time = "2024-05-23T11:13:55.01Z" },
+]
+
+[[package]]
 name = "dotty-dict"
 version = "1.3.1"
 source = { registry = "https://pypi.org/simple" }
@@ -390,6 +404,7 @@ dependencies = [
     { name = "google-cloud-bigquery" },
     { name = "google-cloud-storage" },
     { name = "jinja2" },
+    { name = "oracledb" },
     { name = "psutil" },
     { name = "pyaml" },
     { name = "pyodbc" },
@@ -413,6 +428,7 @@ dev = [
     { name = "pytest-timeout" },
     { name = "python-semantic-release" },
     { name = "ruff" },
+    { name = "testcontainers", extra = ["mssql"] },
 ]
 
 [package.metadata]
@@ -423,6 +439,7 @@ requires-dist = [
     { name = "google-cloud-bigquery", specifier = ">=3.40.1" },
     { name = "google-cloud-storage", specifier = ">=3.9.0" },
     { name = "jinja2", specifier = ">=3.1.6" },
+    { name = "oracledb", specifier = ">=3.4.2" },
     { name = "psutil", specifier = ">=7.2.2" },
     { name = "pyaml", specifier = ">=26.2.1" },
     { name = "pyodbc", specifier = ">=5.3.0" },
@@ -446,6 +463,7 @@ dev = [
     { name = "pytest-timeout", specifier = ">=2.3.1" },
     { name = "python-semantic-release", specifier = ">=10.5.3" },
     { name = "ruff" },
+    { name = "testcontainers", extras = ["mssql"], specifier = ">=4.9.0" },
 ]
 
 [[package]]
@@ -944,6 +962,33 @@ wheels = [
 ]
 
 [[package]]
+name = "oracledb"
+version = "3.4.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "cryptography" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/f7/02/70a872d1a4a739b4f7371ab8d3d5ed8c6e57e142e2503531aafcb220893c/oracledb-3.4.2.tar.gz", hash = "sha256:46e0f2278ff1fe83fbc33a3b93c72d429323ec7eed47bc9484e217776cd437e5", size = 855467, upload-time = "2026-01-28T17:25:39.91Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/8f/81/2e6154f34b71cd93b4946c73ea13b69d54b8d45a5f6bbffe271793240d21/oracledb-3.4.2-cp312-cp312-macosx_10_13_universal2.whl", hash = "sha256:a7396664e592881225ba66385ee83ce339d864f39003d6e4ca31a894a7e7c552", size = 4220806, upload-time = "2026-01-28T17:26:04.322Z" },
+    { url = "https://files.pythonhosted.org/packages/ab/a9/a1d59aaac77d8f727156ec6a3b03399917c90b7da4f02d057f92e5601f56/oracledb-3.4.2-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:0f04a2d62073407672f114d02529921de0677c6883ed7c64d8d1a3c04caa3238", size = 2233795, upload-time = "2026-01-28T17:26:05.877Z" },
+    { url = "https://files.pythonhosted.org/packages/94/ec/8c4a38020cd251572bd406ddcbde98ca052ec94b5684f9aa9ef1ddfcc68c/oracledb-3.4.2-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:d8d75e4f879b908be66cce05ba6c05791a5dbb4a15e39abc01aa25c8a2492bd9", size = 2424756, upload-time = "2026-01-28T17:26:07.35Z" },
+    { url = "https://files.pythonhosted.org/packages/fa/7d/c251c2a8567151ccfcfbe3467ea9a60fb5480dc4719342e2e6b7a9679e5d/oracledb-3.4.2-cp312-cp312-win32.whl", hash = "sha256:31b7ee83c23d0439778303de8a675717f805f7e8edb5556d48c4d8343bcf14f5", size = 1453486, upload-time = "2026-01-28T17:26:08.869Z" },
+    { url = "https://files.pythonhosted.org/packages/4c/78/c939f3c16fb39400c4734d5a3340db5659ba4e9dce23032d7b33ccfd3fe5/oracledb-3.4.2-cp312-cp312-win_amd64.whl", hash = "sha256:ac25a0448fc830fb7029ad50cd136cdbfcd06975d53967e269772cc5cb8c203a", size = 1794445, upload-time = "2026-01-28T17:26:10.66Z" },
+    { url = "https://files.pythonhosted.org/packages/22/68/f7126f5d911c295b57720c6b1a0609a5a2667b4546946433552a4de46333/oracledb-3.4.2-cp313-cp313-macosx_10_13_universal2.whl", hash = "sha256:643c25d301a289a371e37fcedb59e5fa5e54fb321708e5c12821c4b55bdd8a4d", size = 4205176, upload-time = "2026-01-28T17:26:12.463Z" },
+    { url = "https://files.pythonhosted.org/packages/5d/93/2fced60f92dc82e66980a8a3ba5c1ea48110bf1dd81d030edb69d88f992e/oracledb-3.4.2-cp313-cp313-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:55397e7eb43bb7017c03a981c736c25724182f5210951181dfe3fab0e5d457fb", size = 2231298, upload-time = "2026-01-28T17:26:14.497Z" },
+    { url = "https://files.pythonhosted.org/packages/75/a7/4dd286f3a6348d786fef9e6ab2e6c9b74ca9195d9a756f2a67e45743cdf0/oracledb-3.4.2-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:b26a10f9c790bd141ffc8af68520803ed4a44a9258bf7d1eea9bfdd36bd6df7f", size = 2439430, upload-time = "2026-01-28T17:26:16.044Z" },
+    { url = "https://files.pythonhosted.org/packages/19/28/94bc753e5e969c60ee5d9c914e2b4ef79999eaca8e91bcab2fbf0586b80b/oracledb-3.4.2-cp313-cp313-win32.whl", hash = "sha256:b974caec2c330c22bbe765705a5ac7d98ec3022811dec2042d561a3c65cb991b", size = 1458209, upload-time = "2026-01-28T17:26:17.652Z" },
+    { url = "https://files.pythonhosted.org/packages/cb/2b/593a9b2d4c12c9de3289e67d84fe023336d99f36ba51442a5a0f5ce6acf7/oracledb-3.4.2-cp313-cp313-win_amd64.whl", hash = "sha256:3df8eee1410d25360599968b1625b000f10c5ae0e47274031a7842a9dc418890", size = 1793558, upload-time = "2026-01-28T17:26:19.914Z" },
+    { url = "https://files.pythonhosted.org/packages/42/20/1e98f84c1555911c46b4fa870fbef2a80617bf7e0a5f178078ecf466c917/oracledb-3.4.2-cp314-cp314-macosx_10_15_universal2.whl", hash = "sha256:59ad6438f56a25e8e1a4a3dd1b42235a5d09ab9ba417ff2ad14eae6596f3d06f", size = 4247459, upload-time = "2026-01-28T17:26:22.356Z" },
+    { url = "https://files.pythonhosted.org/packages/7d/74/95963e2d94f84b9937a562a9a2529f72d050afbc2ffd88f6661e3a876f7d/oracledb-3.4.2-cp314-cp314-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:404ec1451d0448653ee074213b87d6c5bd65eaa74b50083ddf2c9c3e11c71c71", size = 2271749, upload-time = "2026-01-28T17:26:24.078Z" },
+    { url = "https://files.pythonhosted.org/packages/82/89/38ce85148a246087795379ee52c5b20726a00a69c87ba6ec266bcdad30fc/oracledb-3.4.2-cp314-cp314-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:19fa80ef84f85ad74077aa626067bbe697e527bd39604b4209f9d86cb2876b89", size = 2452031, upload-time = "2026-01-28T17:26:26.08Z" },
+    { url = "https://files.pythonhosted.org/packages/3f/8d/51fe907fdec0267ad7c6e9a62998cbe878efcd168ea6e39f162fab62fdaa/oracledb-3.4.2-cp314-cp314-win32.whl", hash = "sha256:d7ce75c498bff758548ec6e4424ab4271aa257e5887cc436a54bc947fd46199a", size = 1480973, upload-time = "2026-01-28T17:26:27.584Z" },
+    { url = "https://files.pythonhosted.org/packages/48/22/a37354f19786774e5e4041338043b516db060aacfdfcd5aca8bb92c2539a/oracledb-3.4.2-cp314-cp314-win_amd64.whl", hash = "sha256:5d7befb014174c5ae11c3a08f5ed6668a25ab2335d8e7104dca70d54d54a5b3a", size = 1837756, upload-time = "2026-01-28T17:26:29.032Z" },
+]
+
+[[package]]
 name = "packaging"
 version = "26.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1172,6 +1217,35 @@ wheels = [
 ]
 
 [[package]]
+name = "pymssql"
+version = "2.3.13"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/7a/cc/843c044b7f71ee329436b7327c578383e2f2499313899f88ad267cdf1f33/pymssql-2.3.13.tar.gz", hash = "sha256:2137e904b1a65546be4ccb96730a391fcd5a85aab8a0632721feb5d7e39cfbce", size = 203153, upload-time = "2026-02-14T05:00:36.865Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ba/60/a2e8a8a38f7be21d54402e2b3365cd56f1761ce9f2706c97f864e8aa8300/pymssql-2.3.13-cp312-cp312-macosx_14_0_arm64.whl", hash = "sha256:cf4f32b4a05b66f02cb7d55a0f3bcb0574a6f8cf0bee4bea6f7b104038364733", size = 3158689, upload-time = "2026-02-14T04:59:46.982Z" },
+    { url = "https://files.pythonhosted.org/packages/43/9e/0cf0ffb9e2f73238baf766d8e31d7237b5bee3cc1bb29a376b404610994a/pymssql-2.3.13-cp312-cp312-macosx_15_0_x86_64.whl", hash = "sha256:2b056eb175955f7fb715b60dc1c0c624969f4d24dbdcf804b41ab1e640a2b131", size = 2960018, upload-time = "2026-02-14T04:59:48.668Z" },
+    { url = "https://files.pythonhosted.org/packages/93/ea/bc27354feaca717faa4626911f6b19bb62985c87dda28957c63de4de5895/pymssql-2.3.13-cp312-cp312-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:319810b89aa64b99d9c5c01518752c813938df230496fa2c4c6dda0603f04c4c", size = 3065719, upload-time = "2026-02-14T04:59:50.369Z" },
+    { url = "https://files.pythonhosted.org/packages/1e/7a/8028681c96241fb5fc850b87c8959402c353e4b83c6e049a99ffa67ded54/pymssql-2.3.13-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:c0ea72641cb0f8bce7ad8565dbdbda4a7437aa58bce045f2a3a788d71af2e4be", size = 3190567, upload-time = "2026-02-14T04:59:52.202Z" },
+    { url = "https://files.pythonhosted.org/packages/aa/f1/ab5b76adbbd6db9ce746d448db34b044683522e7e7b95053f9dd0165297b/pymssql-2.3.13-cp312-cp312-musllinux_1_2_aarch64.whl", hash = "sha256:1493f63d213607f708a5722aa230776ada726ccdb94097fab090a1717a2534e0", size = 3710481, upload-time = "2026-02-14T04:59:54.01Z" },
+    { url = "https://files.pythonhosted.org/packages/59/aa/2fa0951475cd0a1829e0b8bfbe334d04ece4bce11546a556b005c4100689/pymssql-2.3.13-cp312-cp312-musllinux_1_2_x86_64.whl", hash = "sha256:eb3275985c23479e952d6462ae6c8b2b6993ab6b99a92805a9c17942cf3d5b3d", size = 3453789, upload-time = "2026-02-14T04:59:56.841Z" },
+    { url = "https://files.pythonhosted.org/packages/78/08/8cd2af9003f9fc03912b658a64f5a4919dcd68f0dd3bbc822b49a3d14fd9/pymssql-2.3.13-cp312-cp312-win_amd64.whl", hash = "sha256:a930adda87bdd8351a5637cf73d6491936f34e525a5e513068a6eac742f69cdb", size = 1994709, upload-time = "2026-02-14T04:59:58.972Z" },
+    { url = "https://files.pythonhosted.org/packages/d4/4f/ee15b1f6b11e7c3accdc7da7840a019b63f12ba09eaa008acc601182f516/pymssql-2.3.13-cp313-cp313-macosx_14_0_arm64.whl", hash = "sha256:30918bb044242865c01838909777ef5e0f1b9ecd7f5882346aefa57f4414b29c", size = 3156333, upload-time = "2026-02-14T05:00:01.21Z" },
+    { url = "https://files.pythonhosted.org/packages/79/03/aea5c77bad4a52649a1d9f786a1d9ce1c83d50f1a75df288e292737b6d80/pymssql-2.3.13-cp313-cp313-macosx_15_0_x86_64.whl", hash = "sha256:1c6d0b2d7961f159a07e4f0d8cc81f70ceab83f5e7fd1e832a2d069e1d67ee4e", size = 2957990, upload-time = "2026-02-14T05:00:03.11Z" },
+    { url = "https://files.pythonhosted.org/packages/5f/f8/30ac16fba32ff066b05f12c392d7b812fe11f06cb62d1d86ca5177c50a8b/pymssql-2.3.13-cp313-cp313-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:16c5957a3c9e51a03276bfd76a22431e2bc4c565e2e95f2cbb3559312edda230", size = 3065264, upload-time = "2026-02-14T05:00:05.377Z" },
+    { url = "https://files.pythonhosted.org/packages/a9/98/7568447bf85921d21453fd56e19b6c9591d595fde0546c5a569f3ae937a8/pymssql-2.3.13-cp313-cp313-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:0fddd24efe9d18bbf174fab7c6745b0927773718387f5517cf8082241f721a68", size = 3190039, upload-time = "2026-02-14T05:00:06.925Z" },
+    { url = "https://files.pythonhosted.org/packages/35/f1/4d9d275ebaac42cdd49d40d504ccb648f27710660c8b60cc427752438c09/pymssql-2.3.13-cp313-cp313-musllinux_1_2_aarch64.whl", hash = "sha256:123c55ee41bc7a82c76db12e2eb189b50d0d7a11222b4f8789206d1cda3b33b9", size = 3710151, upload-time = "2026-02-14T05:00:08.424Z" },
+    { url = "https://files.pythonhosted.org/packages/6f/bd/a5cc6244fd27d3ea0cc82f12a7d38a24d7fd90b0022afd250014e8bfba15/pymssql-2.3.13-cp313-cp313-musllinux_1_2_x86_64.whl", hash = "sha256:e053b443e842f9e1698fcb2b23a4bff1ff3d410894d880064e754ad823d541e5", size = 3453156, upload-time = "2026-02-14T05:00:09.978Z" },
+    { url = "https://files.pythonhosted.org/packages/26/d0/c20ff0bbffd18db528bcc7b0c68b25c12ad563ed67c56ceca87c58f7399e/pymssql-2.3.13-cp313-cp313-win_amd64.whl", hash = "sha256:5c045c0f1977a679cc30d5acd9da3f8aeb2dc6e744895b26444b4a2f20dad9a0", size = 1995236, upload-time = "2026-02-14T05:00:11.495Z" },
+    { url = "https://files.pythonhosted.org/packages/ec/5f/6b64f78181d680f655ab40ba7b34cb68c045a2f4e04a10a70d768cd383b7/pymssql-2.3.13-cp314-cp314-macosx_14_0_arm64.whl", hash = "sha256:fc5482969c813b0a45ce51c41844ae5bfa8044ad5ef8b4820ef6de7d4545b7f2", size = 3158377, upload-time = "2026-02-14T05:00:13.581Z" },
+    { url = "https://files.pythonhosted.org/packages/ff/24/155dbb0992c431496d440f47fb9d587cd0059ee20baf65e3d891794d862a/pymssql-2.3.13-cp314-cp314-macosx_15_0_x86_64.whl", hash = "sha256:ff5be7ab1d643dbce2ee3424d2ef9ae8e4146cf75bd20946bc7a6108e3ad1e47", size = 2959039, upload-time = "2026-02-14T05:00:15.883Z" },
+    { url = "https://files.pythonhosted.org/packages/c9/89/b453dd1b1188779621fb974ac715ab2e738f4a0b69f7291ab014298bd80d/pymssql-2.3.13-cp314-cp314-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:8d66ce0a249d2e3b57369048d71e1f00d08dfb90a758d134da0250ae7bc739c1", size = 3063862, upload-time = "2026-02-14T05:00:17.537Z" },
+    { url = "https://files.pythonhosted.org/packages/02/e5/96f57c78162013678ecc3f3f7e5fb52c83ee07beef26906d0870770c3ef6/pymssql-2.3.13-cp314-cp314-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:d663c908414a6a032f04d17628138b1782af916afc0df9fefac4751fa394c3ac", size = 3188155, upload-time = "2026-02-14T05:00:19.011Z" },
+    { url = "https://files.pythonhosted.org/packages/cd/a2/4bee9484734ae0c55d10a2f6ff82dd4e416f52420755161b8760c817ad64/pymssql-2.3.13-cp314-cp314-musllinux_1_2_aarch64.whl", hash = "sha256:aa5e07eff7e6e8bd4ba22c30e4cb8dd073e138cd272090603609a15cc5dbc75b", size = 3709344, upload-time = "2026-02-14T05:00:21.139Z" },
+    { url = "https://files.pythonhosted.org/packages/37/cf/3520d96afa213c88db4f4a1988199db476d869a62afdd5d9c4635c184631/pymssql-2.3.13-cp314-cp314-musllinux_1_2_x86_64.whl", hash = "sha256:db77da1a3fc9b5b5c5400639d79d7658ba7ad620957100c5b025be608b562193", size = 3451799, upload-time = "2026-02-14T05:00:22.504Z" },
+    { url = "https://files.pythonhosted.org/packages/25/50/4be9bd9cf4b43208a7175117a533ece200cfe4131a39f9909bdc7560ddeb/pymssql-2.3.13-cp314-cp314-win_amd64.whl", hash = "sha256:7d7037d2b5b907acc7906d0479924db2935a70c720450c41339146a4ada2b93d", size = 2049139, upload-time = "2026-02-14T05:00:23.951Z" },
+]
+
+[[package]]
 name = "pyodbc"
 version = "5.3.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1303,6 +1377,15 @@ wheels = [
 ]
 
 [[package]]
+name = "python-dotenv"
+version = "1.2.2"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/82/ed/0301aeeac3e5353ef3d94b6ec08bbcabd04a72018415dcb29e588514bba8/python_dotenv-1.2.2.tar.gz", hash = "sha256:2c371a91fbd7ba082c2c1dc1f8bf89ca22564a087c2c287cd9b662adde799cf3", size = 50135, upload-time = "2026-03-01T16:00:26.196Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/0b/d7/1959b9648791274998a9c3526f6d0ec8fd2233e4d4acce81bbae76b44b2a/python_dotenv-1.2.2-py3-none-any.whl", hash = "sha256:1d8214789a24de455a8b8bd8ae6fe3c6b69a5e3d64aa8a8e5d68e694bbcb285a", size = 22101, upload-time = "2026-03-01T16:00:25.09Z" },
+]
+
+[[package]]
 name = "python-gitlab"
 version = "6.5.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1337,6 +1420,22 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/19/3a/7332b822825ed0e902c6e950e0d1e90e8f666fd12eb27855d1c8b6677eff/python_semantic_release-10.5.3.tar.gz", hash = "sha256:de4da78635fa666e5774caaca2be32063cae72431eb75e2ac23b9f2dfd190785", size = 618034, upload-time = "2025-12-14T22:37:29.782Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/6b/01/ada29a1215df601bded0a2efd3b6d53864a0a9e0a9ea52aeaebe14fd03fd/python_semantic_release-10.5.3-py3-none-any.whl", hash = "sha256:1be0e07c36fa1f1ec9da4f438c1f6bbd7bc10eb0d6ac0089b0643103708c2823", size = 152716, upload-time = "2025-12-14T22:37:28.089Z" },
+]
+
+[[package]]
+name = "pywin32"
+version = "311"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e7/ab/01ea1943d4eba0f850c3c61e78e8dd59757ff815ff3ccd0a84de5f541f42/pywin32-311-cp312-cp312-win32.whl", hash = "sha256:750ec6e621af2b948540032557b10a2d43b0cee2ae9758c54154d711cc852d31", size = 8706543, upload-time = "2025-07-14T20:13:20.765Z" },
+    { url = "https://files.pythonhosted.org/packages/d1/a8/a0e8d07d4d051ec7502cd58b291ec98dcc0c3fff027caad0470b72cfcc2f/pywin32-311-cp312-cp312-win_amd64.whl", hash = "sha256:b8c095edad5c211ff31c05223658e71bf7116daa0ecf3ad85f3201ea3190d067", size = 9495040, upload-time = "2025-07-14T20:13:22.543Z" },
+    { url = "https://files.pythonhosted.org/packages/ba/3a/2ae996277b4b50f17d61f0603efd8253cb2d79cc7ae159468007b586396d/pywin32-311-cp312-cp312-win_arm64.whl", hash = "sha256:e286f46a9a39c4a18b319c28f59b61de793654af2f395c102b4f819e584b5852", size = 8710102, upload-time = "2025-07-14T20:13:24.682Z" },
+    { url = "https://files.pythonhosted.org/packages/a5/be/3fd5de0979fcb3994bfee0d65ed8ca9506a8a1260651b86174f6a86f52b3/pywin32-311-cp313-cp313-win32.whl", hash = "sha256:f95ba5a847cba10dd8c4d8fefa9f2a6cf283b8b88ed6178fa8a6c1ab16054d0d", size = 8705700, upload-time = "2025-07-14T20:13:26.471Z" },
+    { url = "https://files.pythonhosted.org/packages/e3/28/e0a1909523c6890208295a29e05c2adb2126364e289826c0a8bc7297bd5c/pywin32-311-cp313-cp313-win_amd64.whl", hash = "sha256:718a38f7e5b058e76aee1c56ddd06908116d35147e133427e59a3983f703a20d", size = 9494700, upload-time = "2025-07-14T20:13:28.243Z" },
+    { url = "https://files.pythonhosted.org/packages/04/bf/90339ac0f55726dce7d794e6d79a18a91265bdf3aa70b6b9ca52f35e022a/pywin32-311-cp313-cp313-win_arm64.whl", hash = "sha256:7b4075d959648406202d92a2310cb990fea19b535c7f4a78d3f5e10b926eeb8a", size = 8709318, upload-time = "2025-07-14T20:13:30.348Z" },
+    { url = "https://files.pythonhosted.org/packages/c9/31/097f2e132c4f16d99a22bfb777e0fd88bd8e1c634304e102f313af69ace5/pywin32-311-cp314-cp314-win32.whl", hash = "sha256:b7a2c10b93f8986666d0c803ee19b5990885872a7de910fc460f9b0c2fbf92ee", size = 8840714, upload-time = "2025-07-14T20:13:32.449Z" },
+    { url = "https://files.pythonhosted.org/packages/90/4b/07c77d8ba0e01349358082713400435347df8426208171ce297da32c313d/pywin32-311-cp314-cp314-win_amd64.whl", hash = "sha256:3aca44c046bd2ed8c90de9cb8427f581c479e594e99b5c0bb19b29c10fd6cb87", size = 9656800, upload-time = "2025-07-14T20:13:34.312Z" },
+    { url = "https://files.pythonhosted.org/packages/c0/d2/21af5c535501a7233e734b8af901574572da66fcc254cb35d0609c9080dd/pywin32-311-cp314-cp314-win_arm64.whl", hash = "sha256:a508e2d9025764a8270f93111a970e1d0fbfc33f4153b388bb649b7eec4f9b42", size = 8932540, upload-time = "2025-07-14T20:13:36.379Z" },
 ]
 
 [[package]]
@@ -1530,6 +1629,28 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/47/c6/ee486fd809e357697ee8a44d3d69222b344920433d3b6666ccd9b374630c/tenacity-9.1.4.tar.gz", hash = "sha256:adb31d4c263f2bd041081ab33b498309a57c77f9acf2db65aadf0898179cf93a", size = 49413, upload-time = "2026-02-07T10:45:33.841Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/d7/c1/eb8f9debc45d3b7918a32ab756658a0904732f75e555402972246b0b8e71/tenacity-9.1.4-py3-none-any.whl", hash = "sha256:6095a360c919085f28c6527de529e76a06ad89b23659fa881ae0649b867a9d55", size = 28926, upload-time = "2026-02-07T10:45:32.24Z" },
+]
+
+[[package]]
+name = "testcontainers"
+version = "4.14.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "docker" },
+    { name = "python-dotenv" },
+    { name = "typing-extensions" },
+    { name = "urllib3" },
+    { name = "wrapt" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/8b/02/ef62dec9e4f804189c44df23f0b86897c738d38e9c48282fcd410308632f/testcontainers-4.14.1.tar.gz", hash = "sha256:316f1bb178d829c003acd650233e3ff3c59a833a08d8661c074f58a4fbd42a64", size = 80148, upload-time = "2026-01-31T23:13:46.915Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c8/31/5e7b23f9e43ff7fd46d243808d70c5e8daf3bc08ecf5a7fb84d5e38f7603/testcontainers-4.14.1-py3-none-any.whl", hash = "sha256:03dfef4797b31c82e7b762a454b6afec61a2a512ad54af47ab41e4fa5415f891", size = 125640, upload-time = "2026-01-31T23:13:45.464Z" },
+]
+
+[package.optional-dependencies]
+mssql = [
+    { name = "pymssql" },
+    { name = "sqlalchemy" },
 ]
 
 [[package]]

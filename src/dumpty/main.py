@@ -3,39 +3,43 @@ import json
 import logging
 import os
 import sys
-import oracledb
-
-from datetime import date, datetime
+from datetime import date
+from datetime import datetime
 from pathlib import Path
 from queue import Empty
-from typing import List
+from typing import Any
 
+import oracledb
 import psutil
 from alive_progress import alive_bar
-from tinydb import Query, TinyDB
-from dumpty.config import Config
-from dumpty.extract import Extract, ExtractDB
-from dumpty.pipeline import Pipeline
-from dumpty.util import filter_shuffle
 from google.api_core.exceptions import BadRequest
-from jinja2 import Environment, FileSystemLoader, Template, PackageLoader
+from jinja2 import Environment
+from jinja2 import FileSystemLoader
+from jinja2 import PackageLoader
+from jinja2 import Template
 from sqlalchemy import create_engine
-from tenacity import (
-    Retrying,
-    after_log,
-    retry_if_not_exception_type,
-    stop_after_attempt,
-    stop_after_delay,
-    wait_random_exponential,
-)
+from sqlalchemy import text
+from tenacity import Retrying
+from tenacity import after_log
+from tenacity import retry_if_not_exception_type
+from tenacity import stop_after_attempt
+from tenacity import stop_after_delay
+from tenacity import wait_random_exponential
+from tinydb import Query
+from tinydb import TinyDB
 
 from dumpty import logger
+from dumpty.config import Config
+from dumpty.extract import Extract
+from dumpty.extract import ExtractDB
 from dumpty.gcp import GCP
+from dumpty.pipeline import Pipeline
+from dumpty.util import ensure_gcs_shaded_jar
+from dumpty.util import filter_shuffle
 
-def config_from_args(argv) -> Config:
-    parser = argparse.ArgumentParser(
-        description="MS SQL Server Database export utility named DUMPTY"
-    )
+
+def config_from_args(argv: list[str] | None) -> Config:
+    parser = argparse.ArgumentParser(description="MS SQL Server Database export utility named DUMPTY")
 
     parser.add_argument(
         "--spark-loglevel",
@@ -96,14 +100,16 @@ def config_from_args(argv) -> Config:
         default="config.yaml",
     )
 
-    parser.add_argument('--logfile', type=str,
-                        help='JSON log filename (default: extract.json)')
+    parser.add_argument("--logfile", type=str, help="JSON log filename (default: extract.json)")
 
-    parser.add_argument('--fastcount', action="store_const", const=True,
-                        help='Rowcount for MSSQL tables with store procedure sp_spaceused')
-    
-    parser.add_argument('--schemaonly', action="store_const", const=True,
-                        help='Create dataset and table schema only')
+    parser.add_argument(
+        "--fastcount",
+        action="store_const",
+        const=True,
+        help="Rowcount for MSSQL tables with store procedure sp_spaceused",
+    )
+
+    parser.add_argument("--schemaonly", action="store_const", const=True, help="Create dataset and table schema only")
 
     parser.add_argument(
         "--parse",
@@ -143,9 +149,7 @@ def config_from_args(argv) -> Config:
     logger.setLevel(args.loglevel)
 
     # Parses YAML as a bare Jina2 template (no round-trip parsing)
-    template: Template = Environment(loader=FileSystemLoader(".")).from_string(
-        Path(args.config).read_text()
-    )
+    template: Template = Environment(loader=FileSystemLoader(".")).from_string(Path(args.config).read_text())
 
     template.environment.filters["shuffle"] = filter_shuffle
     parsed = template.render(env=os.environ)
@@ -153,17 +157,21 @@ def config_from_args(argv) -> Config:
         print(parsed)
         sys.exit()
     config = Config.from_yaml(parsed)
+    if not isinstance(config, Config):
+        raise ValueError("Expected a single Config object from YAML")
 
     # STORE THE INITIAL VALUE OF LAST SUCCESSFUL RUN IN A TINY DB DATABASE
     db = TinyDB(config.tinydb_date)
-    if db.get(Query().name == "last_successful_run") == None:
+    if db.get(Query().name == "last_successful_run") is None:
         db.insert({"name": "last_successful_run", "value": config.last_successful_run})
     # READ THE DATE OF LAST SUCCESSFUL RUN FROM THE TINY DB AND USE IT
-    last_successful_run = db.get(Query().name == "last_successful_run").get("value")
+    _lsr_doc = db.get(Query().name == "last_successful_run")
+    last_successful_run = _lsr_doc.get("value") if isinstance(_lsr_doc, dict) else None
     db.close()
     # ADD THE LAST SUCCESSFUL RUN DATE TO THE SQL QUERY
     config.last_successful_run = last_successful_run
-    if last_successful_run != None and config.tables_query != None:
+    query: str | None
+    if last_successful_run is not None and config.tables_query is not None:
         query = config.tables_query.replace("last_successful_run", last_successful_run)
     else:
         query = config.tables_query
@@ -197,12 +205,10 @@ def config_from_args(argv) -> Config:
         parser.error("Dataset must be in format project.dataset")
 
     if config.target_uri is not None and "gs://" not in config.target_uri:
-        parser.error(
-            f"Loading a dataset requires gs:// URI (uri is {config.target_uri}"
-        )
+        parser.error(f"Loading a dataset requires gs:// URI (uri is {config.target_uri}")
 
     if config.target_uri is not None and config.target_uri.endswith("/"):
-        parser.error(f"target_uri cannot end with /")
+        parser.error("target_uri cannot end with /")
 
     if config.project is not None:
         os.environ["GOOGLE_CLOUD_PROJECT"] = config.project
@@ -211,28 +217,30 @@ def config_from_args(argv) -> Config:
 
     return config
 
+
 # Create views (non-materialized) with definition SQL file
-def create_view(config: Config):
+def create_view(config: Config) -> None:
     """
-        Create views.
+    Create views.
     """
     env: Environment = Environment(loader=PackageLoader("dumpty", "sql"))
     vars = {
         "target_dataset": config.target_dataset,
     }
     view_list = config.views
+    if view_list is None:
+        return
     gcp = GCP()
     logger.info("Total number of views in YAML: %d", len(view_list))
     for view in view_list:
         if "file" in view:
             template: Template = env.get_template(view["file"])
             sql = template.render(vars | view)
-            logger.info("Creating view in BigQuery {0} from file {1} {2}".format(view["name"], view["file"], sql))
-            gcp.bigquery_create_view(
-                        "{0}.{1}".format(config.target_dataset, view["name"]), sql)
+            logger.info("Creating view in BigQuery {} from file {} {}".format(view["name"], view["file"], sql))
+            gcp.bigquery_create_view("{}.{}".format(config.target_dataset, view["name"]), sql)
 
 
-def main(args=None):
+def main(args: list[str] | None = None) -> None:
 
     logger.info("DUMPTY ETL STARTED...")
 
@@ -242,9 +250,7 @@ def main(args=None):
     logger.info("config.project: %s", config.project)
     logger.info("config.target_uri: %s", config.target_uri)
     logger.info("config.target_dataset: %s", config.target_dataset)
-    logger.info(
-        "config.target_dataset_description: %s", config.target_dataset_description
-    )
+    logger.info("config.target_dataset_description: %s", config.target_dataset_description)
     logger.info("config.target_dataset_location: %s", config.target_dataset_location)
     logger.info("config.drop_dataset: %s", config.drop_dataset)
     logger.info("config.normalize_schema: %s", config.normalize_schema)
@@ -264,13 +270,20 @@ def main(args=None):
     # reraise=True places the exception at the END of the stack-trace dump
     retryer = Retrying(
         wait=wait_random_exponential(multiplier=1, min=5, max=30),
-        after=after_log(logger, logging.WARNING),
-        stop=(
-            stop_after_delay(1800) | stop_after_attempt(0 if not config.retry else 999)
-        ),
+        after=after_log(logger, logging.WARNING),  # type: ignore[arg-type]
+        stop=(stop_after_delay(1800) | stop_after_attempt(0 if not config.retry else 999)),
         reraise=True,
         retry=retry_if_not_exception_type(BadRequest),
     )
+
+    # If gcs_connector_jar_url is set, download the JAR and inject its path into spark.jars.
+    if config.gcs_connector_jar_url:
+        gcs_jar = ensure_gcs_shaded_jar(config.gcs_connector_jar_url)
+        existing_jars = config.spark.properties.get("spark.jars", "")
+        jar_paths = [j for j in existing_jars.split(",") if j] if existing_jars else []
+        if gcs_jar not in jar_paths:
+            jar_paths.append(gcs_jar)
+        config.spark.properties["spark.jars"] = ",".join(jar_paths)
 
     # Create spark logdir if needed
     spark_log_dir = config.spark.properties.get("spark.eventLog.dir")
@@ -278,32 +291,41 @@ def main(args=None):
         if not os.path.exists(spark_log_dir):
             os.makedirs(spark_log_dir)
 
-    summary = {
+    summary: dict[str, Any] = {
         "start_date": datetime.now(),
         "schema": config.schema,
         "tables": [],
         "warnings": [],
     }
-    completed: List[Extract] = []
+    completed: list[Extract] = []
 
     # Initialize SqlAlchemy
     if config.sqlalchemy.url.startswith("oracle"):
-        oracledb.version = "8.3.0"
+        oracledb.version = "8.3.0"  # type: ignore[assignment]
         sys.modules["cx_Oracle"] = oracledb
-        engine = create_engine(config.sqlalchemy.url, pool_size=config.introspect_workers,
-                               pool_pre_ping=True, max_overflow=config.introspect_workers, echo=False)
+        engine = create_engine(
+            config.sqlalchemy.url,
+            pool_size=config.introspect_workers,
+            pool_pre_ping=True,
+            max_overflow=config.introspect_workers,
+            echo=False,
+        )
     else:
-        engine = create_engine(config.sqlalchemy.url, pool_size=config.introspect_workers, connect_args=config.sqlalchemy.connect_args,
-                               pool_pre_ping=True, max_overflow=config.introspect_workers, isolation_level=config.sqlalchemy.isolation_level, echo=False)
+        engine = create_engine(
+            config.sqlalchemy.url,
+            pool_size=config.introspect_workers,
+            connect_args=config.sqlalchemy.connect_args or {},
+            pool_pre_ping=True,
+            max_overflow=config.introspect_workers,
+            isolation_level=config.sqlalchemy.isolation_level,
+            echo=False,
+        )
 
     failed = False
 
-    with ExtractDB(
-        config.tinydb_database_file, default_table_name=config.schema
-    ) as extract_db:
+    with ExtractDB(config.tinydb_database_file, default_table_name=config.schema) as extract_db:
         with Pipeline(engine, retryer, config) as pipeline:
             with engine.connect() as con:
-
                 # Create destination dataset
                 # DO NOT DROP THE SINGLE COPY OF DATASET - drop_dataset: false
                 if config.target_dataset is not None:
@@ -323,7 +345,7 @@ def main(args=None):
                     if config.tables is not None:
                         pipeline.reconcile(config.tables)
                     if config.views is not None:
-                        pipeline.reconcile_view(config.views)
+                        pipeline.reconcile_view([v["name"] for v in config.views])
 
                 """
                 STEPS:
@@ -343,12 +365,13 @@ def main(args=None):
                         if view["materialized"]:
                             table_list.append(view["name"])
 
-                if config.extract.strip() == "incremental":
-
+                if config.extract is not None and config.extract.strip() == "incremental":
                     logger.info("Running INCREMENTAL EXTRACTION ETL...")
 
                     query = config.tables_query
-                    rs = con.execute(query)
+                    if query is None:
+                        raise ValueError("tables_query must be set for incremental extraction")
+                    rs = con.execute(text(query))
                     rs_all = rs.fetchall()
 
                     result_list = []
@@ -363,25 +386,26 @@ def main(args=None):
                     table_list.sort()
                     result_list.sort()
 
-                    tables_to_extract = [
-                        value for value in table_list if value in result_list
-                    ]
+                    tables_to_extract = [value for value in table_list if value in result_list]
 
                     logger.info(
                         "Total number of tables with data changes for INCREMENTAL extraction: %d",
                         len(tables_to_extract),
                     )
 
-                elif config.extract.strip() == "full":
-
+                elif config.extract is not None and config.extract.strip() == "full":
                     logger.info("Running FULL EXTRACTION ETL...")
 
-                    tables_to_extract = [value for value in table_list]
+                    tables_to_extract = list(table_list)
 
                     logger.info(
                         "Total number of tables for FULL extraction: %d",
                         len(tables_to_extract),
                     )
+
+                else:
+                    # Default: extract all tables (same as full)
+                    tables_to_extract = list(table_list)
 
             logger.info("SECONDLY INTROSPECT AND EXTRACT THE TABLES...")
 
@@ -396,12 +420,10 @@ def main(args=None):
                     stats=False,
                     disable=not config.progress_bar,
                 ) as bar:
-                    while (
-                        count < len(tables_to_extract)
-                        and pipeline.error_queue.qsize() == 0
-                        and not failed
-                    ):
-                        bar.text = f"| {pipeline.status()} | CPU:{psutil.cpu_percent()}% | Mem:{psutil.virtual_memory()[2]}%"
+                    while count < len(tables_to_extract) and pipeline.error_queue.qsize() == 0 and not failed:
+                        bar.text = (
+                            f"| {pipeline.status()} | CPU:{psutil.cpu_percent()}% | Mem:{psutil.virtual_memory()[2]}%"
+                        )
                         try:
                             extract: Extract = pipeline.done_queue.get(timeout=1)
                             extract_db.save(extract)
@@ -427,15 +449,11 @@ def main(args=None):
 
             except Exception as e:
                 logger.error("\nETL FAILED!!!")
-                logger.error("EXCEPTION: ", e)
+                logger.error("EXCEPTION: %s", e)
                 pipeline.shutdown()
                 failed = True
 
-            if (
-                not failed
-                and config.target_dataset is not None
-                and len(config.target_dataset_post_labels) > 0
-            ):
+            if not failed and config.target_dataset is not None and len(config.target_dataset_post_labels) > 0:
                 retryer(
                     pipeline.gcp.bigquery_apply_labels,
                     dataset_ref=config.target_dataset,
@@ -461,9 +479,8 @@ def main(args=None):
                     Query().name == "last_successful_run",
                 )
 
-            last_successful_run = db.get(Query().name == "last_successful_run").get(
-                "value"
-            )
+            _lsr_doc_after = db.get(Query().name == "last_successful_run")
+            last_successful_run = _lsr_doc_after.get("value") if isinstance(_lsr_doc_after, dict) else None
             # print("\nLAST SUCCESSFUL ETL EXECUTION DATE (AFTER EXTRACT): %s", db.all())
             logger.info(
                 "LAST SUCCESSFUL ETL EXECUTION DATE (AFTER EXTRACT): %s",
@@ -472,27 +489,21 @@ def main(args=None):
 
             db.close()
             logger.info("DATA EXTRACTION IS DONE!!!")
-    
+
     # Create views
-    if config.views != None:
+    if config.views is not None:
         create_view(config)
-    
+
     # Summarize
     summary["end_date"] = datetime.now()
-    summary["elapsed_s"] = round(
-        (summary["end_date"] - summary["start_date"]).total_seconds()
-    )
+    summary["elapsed_s"] = round((summary["end_date"] - summary["start_date"]).total_seconds())
 
     if config.target_dataset is not None:
         summary["consistent"] = all(x.consistent() for x in completed)
-        summary["bq_bytes"] = sum(
-            x.bq_bytes if x.bq_bytes is not None else 0 for x in completed
-        )
+        summary["bq_bytes"] = sum(x.bq_bytes if x.bq_bytes is not None else 0 for x in completed)
 
     if config.target_uri is not None:
-        summary["gcs_bytes"] = sum(
-            x.gcs_bytes if x.gcs_bytes is not None else 0 for x in completed
-        )
+        summary["gcs_bytes"] = sum(x.gcs_bytes if x.gcs_bytes is not None else 0 for x in completed)
 
     with open(config.log_file, "w") as outfile:
         outfile.write(json.dumps(summary, indent=4, default=str))
@@ -501,9 +512,7 @@ def main(args=None):
         logger.warning(f"{len(summary['tables'])} tables loaded, with warnings")
 
     if failed:
-        logger.error(
-            "DUMPTY ETL FAILED AT: ", datetime.now().strftime("%m/%d/%Y, %H:%M:%S")
-        )
+        logger.error(f"DUMPTY ETL FAILED AT: {datetime.now().strftime('%m/%d/%Y, %H:%M:%S')}")
         exit(1)
 
     logger.info("DUMPTY ETL ENDED...")

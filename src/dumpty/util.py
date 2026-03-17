@@ -1,16 +1,38 @@
+import logging
 import random
 import re
-import datetime
-from sqlalchemy.sql.functions import GenericFunction
-from sqlalchemy.sql import sqltypes
+import urllib.request
+from pathlib import Path
+
 from sqlalchemy import literal_column
+from sqlalchemy.sql import sqltypes
+from sqlalchemy.sql.functions import GenericFunction
+
+
+logger = logging.getLogger(__name__)
+
+
+def ensure_gcs_shaded_jar(url: str) -> str:
+    """Download a JAR from *url* to ~/.cache/dumpty/ if not already present.
+
+    Returns the absolute path to the cached JAR.
+    """
+    jar_name = url.rsplit("/", 1)[-1]
+    cache_dir = Path.home() / ".cache" / "dumpty"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    jar_path = cache_dir / jar_name
+    if not jar_path.exists():
+        logger.info("Downloading %s ...", url)
+        urllib.request.urlretrieve(url, jar_path)  # noqa: S310
+        logger.info("Saved to %s", jar_path)
+    return str(jar_path)
 
 
 def normalize_str(x: str) -> str:
     return re.sub(r"[^a-zA-Z0-9]", "_", x).lower()
 
 
-def filter_shuffle(seq):
+def filter_shuffle(seq: list) -> list:
     """
     Filter for Jinja to shuffle a list
     """
@@ -18,11 +40,11 @@ def filter_shuffle(seq):
         result = list(seq)
         random.shuffle(result)
         return result
-    except:
+    except Exception:
         return seq
 
 
-class count_big(GenericFunction):
+class CountBig(GenericFunction):
     r"""The MSSQL count_big aggregate function.  With no arguments,
     emits COUNT \*.
 
@@ -43,10 +65,12 @@ class count_big(GenericFunction):
 
 
     """
-    type = sqltypes.Integer
+
+    name = "count_big"
+    type = sqltypes.Integer()
     inherit_cache = True
 
     def __init__(self, expression=None, **kwargs):
         if expression is None:
             expression = literal_column("*")
-        super(count_big, self).__init__(expression, **kwargs)
+        super().__init__(expression, **kwargs)

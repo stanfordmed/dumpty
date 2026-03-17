@@ -1,41 +1,68 @@
+"""Pipeline class and related multithreading classes for the ELT process."""
+
 import json
 import traceback
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from math import ceil
-from queue import Empty, Queue
+from queue import Empty
+from queue import Queue
 from random import uniform
 from threading import Thread
 from time import sleep
-from typing import Callable, List
+from typing import Any
 
 from pyspark import SparkConf
-from pyspark.sql import DataFrame, SparkSession
+from pyspark.sql import DataFrame
+from pyspark.sql import SparkSession
 from pyspark.sql.functions import col
-from sqlalchemy import Column, MetaData, Table, func, inspect, literal_column, text
-from sqlalchemy.engine import Engine, Inspector
+from sqlalchemy import Column
+from sqlalchemy import MetaData
+from sqlalchemy import Table
+from sqlalchemy import func
+from sqlalchemy import inspect
+from sqlalchemy import literal_column
+from sqlalchemy import select
+from sqlalchemy import text
 from sqlalchemy.dialects.mssql import UNIQUEIDENTIFIER
+from sqlalchemy.engine import Engine
+from sqlalchemy.engine import Inspector
 from sqlalchemy.orm import Session
 from sqlalchemy.sql import sqltypes
-from sqlalchemy.sql.sqltypes import *
 from sqlalchemy.sql.expression import cast
+from sqlalchemy.sql.sqltypes import REAL
+from sqlalchemy.sql.sqltypes import BigInteger
+from sqlalchemy.sql.sqltypes import Boolean
+from sqlalchemy.sql.sqltypes import Date
+from sqlalchemy.sql.sqltypes import DateTime
+from sqlalchemy.sql.sqltypes import Float
+from sqlalchemy.sql.sqltypes import Integer
+from sqlalchemy.sql.sqltypes import LargeBinary
+from sqlalchemy.sql.sqltypes import Numeric
+from sqlalchemy.sql.sqltypes import SmallInteger
+from sqlalchemy.sql.sqltypes import String
 from tenacity import Retrying
 
 from dumpty import logger
 from dumpty.config import Config
-from dumpty.exceptions import ExtractException, ValidationException
+from dumpty.exceptions import ExtractError
+from dumpty.exceptions import ValidationError
 from dumpty.extract import Extract
 from dumpty.gcp import GCP
-from dumpty.util import normalize_str, count_big
+from dumpty.util import CountBig
+from dumpty.util import normalize_str
+
 
 @dataclass
 class Step:
-    """Initialize a :class:`.Step` instance. 
-       :param func: Function to apply to item received from :param in_queue:
-       :param in_queue: Queue to receive work for :param func:
-       :param out_queue: Queue to send result of applying :param func: :param in_queue:
-       :param error_queue: Queue to send exceptions from applying :param func:
+    """Initialize a :class:`.Step` instance.
+    :param func: Function to apply to item received from :param in_queue:
+    :param in_queue: Queue to receive work for :param func:
+    :param out_queue: Queue to send result of applying :param func: :param in_queue:
+    :param error_queue: Queue to send exceptions from applying :param func:
     """
+
     func: Callable
     in_queue: Queue
     out_queue: Queue
@@ -43,7 +70,6 @@ class Step:
 
 
 class QueueWorker(Thread):
-
     def __init__(self, step: Step):
         self.step = step
         self.busy = False
@@ -61,8 +87,8 @@ class QueueWorker(Thread):
                     self.step.out_queue.put(self.step.func(extract))
                 except Exception as ex:
                     try:
-                        raise ExtractException(extract) from ex
-                    except ExtractException as ex:
+                        raise ExtractError(extract) from ex
+                    except ExtractError as ex:
                         logger.error(ex)
                         traceback.print_exc()
                         self.step.error_queue.put(ex)
@@ -76,7 +102,7 @@ class QueueWorker(Thread):
         self._shutdown = True
 
 
-class QueueWorkerPool():
+class QueueWorkerPool:
     def __init__(self, step: Step, size: int):
         self.step = step
         self.workers = []
@@ -92,8 +118,7 @@ class QueueWorkerPool():
 
 
 class QueueSubmitter(Thread):
-    """Submits items to a queue in a background thread, waiting 0.0-0.25s between each to avoid hammering
-    """
+    """Submits items to a queue in a background thread, waiting 0.0-0.25s between each to avoid hammering"""
 
     def __init__(self, items, queue: Queue):
         self.items = items
@@ -109,62 +134,56 @@ class QueueSubmitter(Thread):
 
 
 class Pipeline:
-    """Main class for the various stages of the ELT process
-    """
+    """Main class for the various stages of the ELT process"""
 
     def __init__(self, engine: Engine, retryer: Retrying, config: Config):
-        """Initialize a :class:`.Pipeline` instance. 
-           :param spark: Spark instance
-           :param engine: SqlAlchemy engine
-           :param retryer: Retrying instance
-           :param config: Config instance
+        """Initialize a :class:`.Pipeline` instance.
+        :param spark: Spark instance
+        :param engine: SqlAlchemy engine
+        :param retryer: Retrying instance
+        :param config: Config instance
         """
         self.config = config
         self.engine = engine
         self.retryer = retryer
         self.gcp = GCP()
-        self._metadata = MetaData(bind=engine, schema=config.schema)
+        self._metadata = MetaData(schema=config.schema)
         self._inspector: Inspector = inspect(engine)
 
-        self.introspect_queue = Queue(config.introspect_workers)
-        self.extract_queue = Queue(config.extract_workers)
-        self.load_queue = Queue(config.load_workers)
-        
-        self.done_queue = Queue()
-        self.error_queue = Queue()
+        self.introspect_queue: Queue[Extract] = Queue(config.introspect_workers)
+        self.extract_queue: Queue[Extract] = Queue(config.extract_workers)
+        self.load_queue: Queue[Extract] = Queue(config.load_workers)
+
+        self.done_queue: Queue[Extract] = Queue()
+        self.error_queue: Queue[ExtractError] = Queue()
 
         # Setup ELT steps and queues
         # introspect in differenct ways for mssql and oracle
         if self.engine.dialect.name == "mssql":
-            introspect_step = Step(
-                self.introspect, self.introspect_queue, self.extract_queue, self.error_queue)
+            introspect_step = Step(self.introspect, self.introspect_queue, self.extract_queue, self.error_queue)
         else:
-            introspect_step = Step(
-                self.introspect_oracle, self.introspect_queue, self.extract_queue, self.error_queue)
+            introspect_step = Step(self.introspect_oracle, self.introspect_queue, self.extract_queue, self.error_queue)
 
-        extract_step = Step(
-            self.extract, self.extract_queue, self.load_queue, self.error_queue)
+        extract_step = Step(self.extract, self.extract_queue, self.load_queue, self.error_queue)
 
-        load_step = Step(self.load, self.load_queue,
-                        self.done_queue, self.error_queue)
-        
-        self.introspect_workers = QueueWorkerPool(
-            introspect_step, self.introspect_queue.maxsize)
+        load_step = Step(self.load, self.load_queue, self.done_queue, self.error_queue)
 
-        self.extract_workers = QueueWorkerPool(
-            extract_step, self.extract_queue.maxsize)
+        self.introspect_workers = QueueWorkerPool(introspect_step, self.introspect_queue.maxsize)
+
+        self.extract_workers = QueueWorkerPool(extract_step, self.extract_queue.maxsize)
 
         self.load_workers = QueueWorkerPool(load_step, self.load_queue.maxsize)
-       
+
     def __enter__(self):
-        ctx = SparkSession\
-            .builder\
-            .master(f'local[{self.config.spark.threads}]')\
-            .appName('Dumpty')\
+        ctx = (
+            SparkSession.builder.master(f"local[{self.config.spark.threads}]")
+            .appName("Dumpty")
+            .config("spark.driver.host", "127.0.0.1")
+            .config("spark.driver.bindAddress", "127.0.0.1")
             .config(conf=SparkConf().setAll(list(self.config.spark.properties.items())))
+        )
         self._spark_session = ctx.getOrCreate()
-        self._spark_session.sparkContext.setLogLevel(
-            self.config.spark.log_level)
+        self._spark_session.sparkContext.setLogLevel(self.config.spark.log_level)
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
@@ -173,17 +192,29 @@ class Pipeline:
 
     @staticmethod
     def empty_cols(df: DataFrame, table_name: str, drop_cols: str) -> DataFrame:
-        drop_col_names: List[str] = []
-        for col_name in drop_cols.split(','):
-            if col_name.rsplit('.')[0].lower() == table_name.lower():
-                drop_col_names.append(col_name.rsplit('.')[-1])
+        drop_col_names: list[str] = []
+        for col_name in drop_cols.split(","):
+            if col_name.rsplit(".")[0].lower() == table_name.lower():
+                drop_col_names.append(col_name.rsplit(".")[-1])
                 # Dataframe drop doesn't work. When it saves the data, the columns still exists. e.g. df.drop(col_name.rsplit('.')[-1])
-                logger.info(
-                    f"Table {table_name} - Drop column: {col_name.rsplit('.')[-1]}")
+                logger.info(f"Table {table_name} - Drop column: {col_name.rsplit('.')[-1]}")
         if len(drop_col_names) > 0:
             return df.select([c for c in df.columns if c not in drop_col_names])
         else:
             return df
+
+    def _filter_bq_schema(self, bq_schema: list[dict], table_name: str) -> list[dict]:
+        """Remove columns from BQ schema that are listed in empty_columns for this table."""
+        if self.config.empty_columns is None:
+            return bq_schema
+        drop_col_names: set[str] = set()
+        for col_spec in self.config.empty_columns.split(","):
+            parts = col_spec.strip().split(".")
+            if parts[0].lower() == table_name.lower():
+                drop_col_names.add(parts[-1].lower())
+        if not drop_col_names:
+            return bq_schema
+        return [field for field in bq_schema if field["name"].lower() not in drop_col_names]
 
     @staticmethod
     def normalize_df(df: DataFrame) -> DataFrame:
@@ -197,42 +228,41 @@ class Pipeline:
         col: Column
         schemas = []
         for col in table.columns:
-            schema = {}
-            schema['name'] = normalize_str(col.name)
-            schema['mode'] = "Nullable" if col.nullable else "Required"
+            schema: dict[str, Any] = {}
+            schema["name"] = normalize_str(col.name)
+            schema["mode"] = "Nullable" if col.nullable else "Required"
 
             if isinstance(col.type, (DateTime)):
-                schema['type'] = "DATETIME"
+                schema["type"] = "DATETIME"
             elif isinstance(col.type, (Date)):
-                schema['type'] = "DATE"
+                schema["type"] = "DATE"
             elif isinstance(col.type, (Float, REAL)):
-                schema['type'] = "FLOAT64"
+                schema["type"] = "FLOAT64"
             elif isinstance(col.type, (String, UNIQUEIDENTIFIER)):
-                schema['type'] = "STRING"
+                schema["type"] = "STRING"
             elif isinstance(col.type, (Boolean)):
-                schema['type'] = "BOOL"
+                schema["type"] = "BOOL"
             elif isinstance(col.type, (LargeBinary)):
-                schema['type'] = "BYTES"
+                schema["type"] = "BYTES"
             elif isinstance(col.type, (Numeric)):
                 p = col.type.precision if col.type.precision is not None else 0
                 s = col.type.scale if col.type.scale is not None else 0
 
                 if s == 0 and p <= 18:
-                    schema['type'] = "INT64"
-                elif (s >= 0 and s <= 9) and ((max(s, 1) <= p) and p <= s+29):
-                    schema['type'] = "NUMERIC"
-                    schema['precision'] = p 
-                    schema['scale'] = s
-                elif (s >= 0 and s <= 38) and ((max(s, 1) <= p) and p <= s+38):
-                    schema['type'] = "BIGNUMERIC"
-                    schema['precision'] = p
-                    schema['scale'] = s
+                    schema["type"] = "INT64"
+                elif (s >= 0 and s <= 9) and ((max(s, 1) <= p) and p <= s + 29):
+                    schema["type"] = "NUMERIC"
+                    schema["precision"] = p
+                    schema["scale"] = s
+                elif (s >= 0 and s <= 38) and ((max(s, 1) <= p) and p <= s + 38):
+                    schema["type"] = "BIGNUMERIC"
+                    schema["precision"] = p
+                    schema["scale"] = s
             elif isinstance(col.type, (SmallInteger, Integer, BigInteger)):
-                schema['type'] = "INT64"
+                schema["type"] = "INT64"
             else:
-                logger.warning(
-                    f"Unmapped type in {table.name}.{col.name} ({col.type}), defaulting to STRING")
-                schema['type'] = "STRING"
+                logger.warning(f"Unmapped type in {table.name}.{col.name} ({col.type}), defaulting to STRING")
+                schema["type"] = "STRING"
 
             schemas.append(schema)
         return schemas
@@ -250,7 +280,7 @@ class Pipeline:
         else:
             return f"Introspecting:{self.introspect_workers.busy_count()} | Extracting:{self.extract_workers.busy_count()} | Loading:{self.load_workers.busy_count()}"
 
-    def submit(self, extracts: List[Extract]):
+    def submit(self, extracts: list[Extract]):
         """Starts a thread submitting extracts to the introspect_queue and returns immediately
 
         Args:
@@ -259,38 +289,36 @@ class Pipeline:
         QueueSubmitter(extracts, self.introspect_queue)
 
     def _julienne(self, table: Table, column: Column, width: int):
-        logger.debug(
-            f"Julienning {table.name} on {column.name} into {width}-row slices")
+        logger.debug(f"Julienning {table.name} on {column.name} into {width}-row slices")
 
         with Session(self.engine) as session:
-            subquery = session\
-                .query(column.label('id'),
-                       func.row_number().over(order_by=column).label('row_num'))\
-                .subquery()
+            subquery = select(column.label("id"), func.row_number().over(order_by=column).label("row_num")).subquery()
             # There doesn't appear to be a generic way to modulo in SQLAlchemy?
             if self.engine.dialect.name == "mssql":
-                modulo_filter = (subquery.c.row_num % width)
+                modulo_filter = subquery.c.row_num % width
             else:
-                modulo_filter = (func.mod(subquery.c.row_num, width))
+                modulo_filter = func.mod(subquery.c.row_num, width)
 
             # Spark predicates can't use parameterized queries, so we can't use native Python types
             # and let python/jdbc handle type conversion. So we cast to a String (VARCHAR) here
             # for anything non-numeric (eg. datetime.datetime) and hope that translates
             # properly in the other direction, in the Spark predicate where clause..
             if isinstance(column.type, sqltypes.Numeric):
-                query = session\
-                    .query(func.distinct(subquery.c.id), subquery.c.row_num)\
-                    .filter(modulo_filter == 0)\
+                stmt = (
+                    select(func.distinct(subquery.c.id), subquery.c.row_num)
+                    .where(modulo_filter == 0)
                     .order_by(subquery.c.row_num)
+                )
             else:
-                query = session\
-                    .query(func.distinct(cast(subquery.c.id, String)), subquery.c.row_num)\
-                    .filter(modulo_filter == 0)\
+                stmt = (
+                    select(func.distinct(cast(subquery.c.id, String)), subquery.c.row_num)
+                    .where(modulo_filter == 0)
                     .order_by(subquery.c.row_num)
+                )
 
-            result = [r[0] for r in query.all()]
+            result = [r[0] for r in session.execute(stmt).all()]
             return result
-    
+
     def introspect(self, extract: Extract) -> Extract:
         """Introspects a SQL table: row counts, min, max, and partitions
 
@@ -302,19 +330,18 @@ class Pipeline:
         """
 
         # Introspect table from SQL database
-        table = Table(extract.name, self._metadata, autoload=True)
+        table = Table(extract.name, self._metadata, autoload_with=self.engine)
 
         # Create BQ schema definition
-        extract.bq_schema = self.bq_schema(table)
+        extract.bq_schema = self._filter_bq_schema(self.bq_schema(table), extract.name)
 
-        if self.config.schemaonly == False:
+        if not self.config.schemaonly:
             if extract.introspect_date is not None:
                 # This table was introspected, is it time to refresh?
                 if self.config.introspection_expire_s > 0:
                     if (datetime.now() - extract.introspect_date).total_seconds() > self.config.introspection_expire_s:
                         # Introspection has expired
-                        logger.info(
-                            f"Introspection for {extract.name} has expired")
+                        logger.info(f"Introspection for {extract.name} has expired")
                         full_introspect = True
                     else:
                         # Introspection has not expired
@@ -326,12 +353,11 @@ class Pipeline:
                 # Never been introspected, or partitioning was modified from prior run
                 full_introspect = True
 
-            logger.debug(
-                f"{'Deep' if full_introspect else 'Fast'} introspecting {extract.name}")
+            logger.debug(f"{'Deep' if full_introspect else 'Fast'} introspecting {extract.name}")
 
             if self.engine.dialect.name == "mssql":
                 # MSSQL COUNT(*) can overflow if > INT_MAX
-                count_fn = count_big
+                count_fn: Any = CountBig
             else:
                 count_fn = func.count
 
@@ -345,37 +371,37 @@ class Pipeline:
                 else:
                     pk = None
             else:
-                pk = table.primary_key.columns[extract.partition_column] if extract.partition_column is not None else None
+                pk = (
+                    table.primary_key.columns[extract.partition_column]
+                    if extract.partition_column is not None
+                    else None
+                )
 
             with Session(self.engine) as session:
-                is_numeric = pk is not None and isinstance(
-                    pk.type, sqltypes.Numeric)
-                if is_numeric and full_introspect:
-                    logger.debug(
-                        f"Getting min({pk.name}), max({pk.name}), and count(*) of {extract.name}")
-                    qry = session.query(func.max(pk).label("max"),
-                                        func.min(pk).label("min"),
-                                        count_fn(
-                                            literal_column("*")).label("count")
-                                        ).select_from(table)
-                    res = qry.one()
+                is_numeric = pk is not None and isinstance(pk.type, sqltypes.Numeric)
+                if pk is not None and isinstance(pk.type, sqltypes.Numeric) and full_introspect:
+                    logger.debug(f"Getting min({pk.name}), max({pk.name}), and count(*) of {extract.name}")
+                    stmt = select(
+                        func.max(pk).label("max"),
+                        func.min(pk).label("min"),
+                        count_fn(literal_column("*")).label("row_count"),
+                    ).select_from(table)
+                    res = session.execute(stmt).one()
                     extract.max = res.max
                     extract.min = res.min
-                    extract.rows = res.count
+                    extract.rows = res.row_count
                 else:
                     logger.debug(f"Getting count(*) of {extract.name}")
                     if not extract.name.startswith("vv_"):
                         if self.config.fastcount:
                             result = session.execute(
-                            f"EXEC sp_spaceused N'{self.config.schema}.{extract.name}';").fetchall()
-                            logger.debug(
-                            f"fast counting result of {result[0][1].rstrip()}")
+                                text(f"EXEC sp_spaceused N'{self.config.schema}.{extract.name}';")
+                            ).fetchall()
+                            logger.debug(f"fast counting result of {result[0][1].rstrip()}")
                             extract.rows = int(result[0][1].rstrip())
                         else:
-                            qry = session.query(
-                                count_fn(literal_column("*")).label("count")
-                            ).select_from(table)
-                            extract.rows = qry.scalar()
+                            stmt = select(count_fn(literal_column("*")).label("count")).select_from(table)
+                            extract.rows = session.execute(stmt).scalar()
 
             if not full_introspect:
                 # Stop here if this table was already introspected recently
@@ -386,45 +412,58 @@ class Pipeline:
             extract.partition_column = None
             extract.predicates = None
 
-            
             # Only partition tables with a PK and would generate at least two partitions when rounded up
-            if pk is not None and extract.rows > 0:
-                partitions = round(
-                    extract.rows / self.config.default_rows_per_partition) if extract.partitions is None else extract.partitions
+            if pk is not None and extract.rows is not None and extract.rows > 0:
+                partitions = (
+                    round(extract.rows / self.config.default_rows_per_partition)
+                    if extract.partitions is None
+                    else extract.partitions
+                )
                 if partitions > 1:
                     extract.partitions = partitions
                     extract.partition_column = pk.name
-                    slice_width = ceil(extract.rows / extract.partitions)
+                    slice_width = ceil(extract.rows / partitions)
 
-                    if is_numeric and ((extract.rows == extract.max) or (extract.rows == extract.max - 1) or (abs(extract.rows - (extract.max - extract.min)) <= 1)):
+                    if (
+                        is_numeric
+                        and extract.max is not None
+                        and extract.min is not None
+                        and (
+                            (extract.rows == extract.max)
+                            or (extract.rows == extract.max - 1)
+                            or (abs(extract.rows - (extract.max - extract.min)) <= 1)
+                        )
+                    ):
                         # Numeric, sequential PK with no gaps uses default Spark column partitioning
-                        logger.info(
-                            f"{extract.name} using Spark partitioning on {pk.name} ({partitions} partitions)")
+                        logger.info(f"{extract.name} using Spark partitioning on {pk.name} ({partitions} partitions)")
                     else:
                         # Non-numeric, or PK is not sequential and likely heavily skewed, julienne the table instead
                         slices = self._julienne(table, pk, slice_width)
                         if len(slices) / partitions < 0.10:
                             logger.warning(
-                                f"Failed to Julienne {extract.name} on {pk.name}, not enough distinct PK values. Using single-threaded extract.")
+                                f"Failed to Julienne {extract.name} on {pk.name}, not enough distinct PK values. Using single-threaded extract."
+                            )
                             extract.predicates = None
                             extract.partition_column = None
                             extract.partitions = None
                         else:
                             quote_char = "" if is_numeric else "'"
                             predicates = []
-                            for i in range(len(slices)+1):
+                            for i in range(len(slices) + 1):
                                 if i == 0:
                                     predicates.append(
-                                        f"{pk.name} <= {quote_char}{slices[i]}{quote_char} OR {pk.name} IS NULL ")
+                                        f"{pk.name} <= {quote_char}{slices[i]}{quote_char} OR {pk.name} IS NULL "
+                                    )
                                 elif i == len(slices):
-                                    predicates.append(
-                                        f"{pk.name} > {quote_char}{slices[i-1]}{quote_char}")
+                                    predicates.append(f"{pk.name} > {quote_char}{slices[i - 1]}{quote_char}")
                                 else:
                                     predicates.append(
-                                        f"{pk.name} > {quote_char}{slices[i-1]}{quote_char} AND {pk.name} <= {quote_char}{slices[i]}{quote_char}")
+                                        f"{pk.name} > {quote_char}{slices[i - 1]}{quote_char} AND {pk.name} <= {quote_char}{slices[i]}{quote_char}"
+                                    )
                             extract.predicates = predicates
                             logger.info(
-                                f"{extract.name} using predicate partitioning on {pk.name} ({partitions} predicates)")
+                                f"{extract.name} using predicate partitioning on {pk.name} ({partitions} predicates)"
+                            )
 
         now = datetime.now()
         extract.introspect_date = now
@@ -434,9 +473,12 @@ class Pipeline:
 
     def _table_partitioned(self, table: Table):
         with Session(self.engine) as session:
-            sql = text(f"""select upper(partitioned) from dba_tables where owner='{self.config.schema}' and table_name=upper('{table.name}')""")
+            sql = text(
+                f"""select upper(partitioned) from dba_tables where owner='{self.config.schema}' and table_name=upper('{table.name}')"""
+            )
             result = session.execute(sql)
-            if result.fetchone()[0] == "YES":
+            row = result.fetchone()
+            if row is not None and row[0] == "YES":
                 return True
         return False
 
@@ -446,20 +488,19 @@ class Pipeline:
                             where	table_owner='{self.config.schema}'
                             and		table_name='{table.name}'""")
             result = session.execute(sql)
-            if int(result.fetchone()[0]) > 0:
+            row = result.fetchone()
+            if row is not None and int(row[0]) > 0:
                 return True
         return False
 
     def _julienne_oracle(self, table: Table, width: int, partitions: int):
-        logger.debug(
-            f"Julienning {table.name} on ROWID into {width}-row slices")
+        logger.debug(f"Julienning {table.name} on ROWID into {width}-row slices")
         result_list_of_dict = []
-        
+
         with Session(self.engine) as session:
             # The table was subpartitioned in database
             if self._table_partitioned(table) and self._table_subpartitioned(table):
-                logger.debug(
-                    f"Julienning subpartitioned table {table.name} on with default chuncks 6")
+                logger.debug(f"Julienning subpartitioned table {table.name} on with default chuncks 6")
                 sql = text(f"""select min_rid, max_rid
                         from
                         (select distinct NVL(dba_tab_subpartitions.SUBPARTITION_NAME, dba_tab_partitions.PARTITION_NAME) as subject_name, dba_tab_partitions.table_name  from dba_tab_partitions
@@ -497,13 +538,12 @@ class Pipeline:
                                 where	object_name = upper('{table.name}')
                                 and	owner='{self.config.schema}')) create_predicate on create_predicate.subobject_name=current_partition.subject_name""")
                 result = session.execute(sql)
-                for (col1, col2) in result.all():
-                    result_list_of_dict.append({'bound1': col1, 'bound2': col2})
+                for col1, col2 in result.all():
+                    result_list_of_dict.append({"bound1": col1, "bound2": col2})
 
             # The table was partitioned in database
             elif self._table_partitioned(table):
-                logger.debug(
-                    f"Julienning partitioned table {table.name} on with default chuncks 6")
+                logger.debug(f"Julienning partitioned table {table.name} on with default chuncks 6")
                 sql = text(f"""select min_rid, max_rid
                         from
                         (select distinct dba_tab_partitions.PARTITION_NAME as subject_name, dba_tab_partitions.table_name
@@ -540,13 +580,12 @@ class Pipeline:
                                 where	object_name = upper('{table.name}')
                                 and	owner='{self.config.schema}')) create_predicate on create_predicate.subobject_name=current_partition.subject_name""")
                 result = session.execute(sql)
-                for (col1, col2) in result.all():
-                    result_list_of_dict.append({'bound1': col1, 'bound2': col2})
+                for col1, col2 in result.all():
+                    result_list_of_dict.append({"bound1": col1, "bound2": col2})
 
             # For non-partitioned table
             else:
-                logger.debug(
-                    f"Julienning non-partitioned {table.name} ({partitions} chuncks)")
+                logger.debug(f"Julienning non-partitioned {table.name} ({partitions} chuncks)")
                 sql = text(f"""select --grp,
                                 dbms_rowid.rowid_create( 1, data_object_id, lo_fno, lo_block, 0 ) min_rid,
                                 dbms_rowid.rowid_create( 1, data_object_id, hi_fno, hi_block, 10000 ) max_rid
@@ -571,78 +610,75 @@ class Pipeline:
                                 blocks,
                                 trunc( (sum(blocks) over (order by relative_fno, block_id)-0.01) / (sum(blocks) over ()/{partitions}) ) grp
                             from dba_extents
-                            where segment_name = upper('{table.name}') 
+                            where segment_name = upper('{table.name}')
                             and owner = '{self.config.schema}' order by block_id
                                 )
                                 ),
                                 (select data_object_id from all_objects where object_name = upper('{table.name}') AND DATA_OBJECT_ID IS NOT NULL )
                             ORDER BY grp""")
                 result = session.execute(sql)
-                for (col1, col2) in result.all():
-                    result_list_of_dict.append({'bound1': col1, 'bound2': col2})
-        logger.debug(
-                    f"Julienning {table.name} to predicate#: {len(result_list_of_dict)}")
+                for col1, col2 in result.all():
+                    result_list_of_dict.append({"bound1": col1, "bound2": col2})
+        logger.debug(f"Julienning {table.name} to predicate#: {len(result_list_of_dict)}")
         return result_list_of_dict
-        
 
     # for Oracle only
     def introspect_oracle(self, extract: Extract) -> Extract:
-        """
-        """
+        """ """
         # Introspect table from SQL database
-        table = Table(extract.name, self._metadata, autoload=True)
+        table = Table(extract.name, self._metadata, autoload_with=self.engine)
 
         # Create BQ schema definition
-        extract.bq_schema = self.bq_schema(table)
+        extract.bq_schema = self._filter_bq_schema(self.bq_schema(table), extract.name)
 
-        if self.config.schemaonly == False:
-            # Never been introspected, or partitioning was modified from prior run 
-            full_introspect = True 
-            logger.debug(
-                    f"{'Deep' if full_introspect else 'Fast'} introspecting {extract.name}")
-            
+        if not self.config.schemaonly:
+            # Never been introspected, or partitioning was modified from prior run
+            full_introspect = True
+            logger.debug(f"{'Deep' if full_introspect else 'Fast'} introspecting {extract.name}")
+
             # Get rowcount
             count_fn = func.count
-            
+
             if self.config.fastcount:
                 with Session(self.engine) as session:
                     result = session.execute(
-                        f"SELECT NUM_ROWS FROM all_tables where TABLE_NAME='{extract.name}' AND OWNER='{self.config.schema}'").fetchall()
-                    logger.debug(
-                        f"{extract.name} fast counting result of {result[0][0]}")
+                        text(
+                            f"SELECT NUM_ROWS FROM all_tables where TABLE_NAME='{extract.name}' AND OWNER='{self.config.schema}'"
+                        )
+                    ).fetchall()
+                    logger.debug(f"{extract.name} fast counting result of {result[0][0]}")
                     extract.rows = result[0][0]
-            if self.config.fastcount == False or extract.rows is None:
+            if not self.config.fastcount or extract.rows is None:
                 logger.debug(f"Getting count(*) of {extract.name}")
                 with Session(self.engine) as session:
-                    qry = session.query(
-                                        count_fn(literal_column("*")).label("count")
-                                    ).select_from(table)
-                    extract.rows = qry.scalar()
-            
+                    stmt = select(count_fn(literal_column("*")).label("count")).select_from(table)
+                    extract.rows = session.execute(stmt).scalar()
+
             # Continue with full introspection, reset partitioning
             extract.partition_column = None
             extract.predicates = None
 
-            partitions = round(extract.rows / self.config.default_rows_per_partition)
-            
-            if partitions > 1:
-                extract.partitions = partitions
-                slice_width = ceil(extract.rows / extract.partitions)
+            if extract.rows is not None:
+                partitions = round(extract.rows / self.config.default_rows_per_partition)
 
-                slices = self._julienne_oracle(table, slice_width, partitions) # return pairs of ROWIDs
+                if partitions > 1:
+                    extract.partitions = partitions
+                    slice_width = ceil(extract.rows / partitions)
 
-                predicates = []
-                for dic in slices:
-                    predicates.append(
-                        f"ROWID >= '{dic['bound1']}' AND ROWID <= '{dic['bound2']}'")
+                    slices = self._julienne_oracle(table, slice_width, partitions)  # return pairs of ROWIDs
 
-                extract.predicates = predicates
-                extract.partition_column = "ROWID"
-                extract.partitions = partitions
-                logger.info(
-                    f"{extract.name} using predicate partitioning on ROWID ({len(predicates)} partitions)")
+                    predicates = []
+                    for dic in slices:
+                        predicates.append(f"ROWID >= '{dic['bound1']}' AND ROWID <= '{dic['bound2']}'")
 
-                logger.debug(f"introspect_oracle table {extract.name} extract.rows: {extract.rows}, extract.partitions: {len(predicates)}, self.config.default_rows_per_partition: {self.config.default_rows_per_partition}")
+                    extract.predicates = predicates
+                    extract.partition_column = "ROWID"
+                    extract.partitions = partitions
+                    logger.info(f"{extract.name} using predicate partitioning on ROWID ({len(predicates)} partitions)")
+
+                    logger.debug(
+                        f"introspect_oracle table {extract.name} extract.rows: {extract.rows}, extract.partitions: {len(predicates)}, self.config.default_rows_per_partition: {self.config.default_rows_per_partition}"
+                    )
 
         now = datetime.now()
         extract.introspect_date = now
@@ -654,55 +690,55 @@ class Pipeline:
 
         session = self._spark_session
         if session.sparkContext._jsc is None:
-            raise ExtractException(
-                extract, f"Spark context lost trying to extract {extract.name}, is Spark shutting down?")
+            raise ExtractError(extract, f"Spark context lost trying to extract {extract.name}, is Spark shutting down?")
 
         session = self._spark_session
         if session.sparkContext._jsc is None:
-            raise ExtractException(
-                extract, f"Spark context lost trying to extract {extract.name}, is Spark shutting down?")
+            raise ExtractError(extract, f"Spark context lost trying to extract {extract.name}, is Spark shutting down?")
 
         # Always normalize table name
         n_table_name = normalize_str(extract.name)
 
         # spark.sparkContext.setJobGroup(table.name, "full extract")
         if extract.predicates is not None and len(extract.predicates) > 0:
-            #predicate_number = len(extract.predicates)
-            session.sparkContext.setJobDescription(
-                f'{extract.name} ({len(extract.predicates)} predicates)')
+            # predicate_number = len(extract.predicates)
+            session.sparkContext.setJobDescription(f"{extract.name} ({len(extract.predicates)} predicates)")
             df = session.read.jdbc(
                 self.config.jdbc.url,
-                table=extract.name,
+                table=f"{self.config.schema}.{extract.name}",
                 predicates=extract.predicates,
-                properties=self.config.jdbc.properties
+                properties=self.config.jdbc.properties,
             )
-            logger.info(
-                f"Extracting {extract.name} as {n_table_name} ({len(extract.predicates)} predicates)")
-        elif extract.partition_column is not None and extract.min is not None and extract.max is not None and extract.partitions > 1:
+            logger.info(f"Extracting {extract.name} as {n_table_name} ({len(extract.predicates)} predicates)")
+        elif (
+            extract.partition_column is not None
+            and extract.min is not None
+            and extract.max is not None
+            and extract.partitions is not None
+            and extract.partitions > 1
+        ):
             session.sparkContext.setJobDescription(
-                f'{extract.name} (partitioned on [{extract.partition_column}] from {extract.min} to {extract.max})')
+                f"{extract.name} (partitioned on [{extract.partition_column}] from {extract.min} to {extract.max})"
+            )
             df = session.read.jdbc(
                 url=self.config.jdbc.url,
-                table=extract.name,
+                table=f"{self.config.schema}.{extract.name}",
                 column=extract.partition_column,
                 lowerBound=str(extract.min),
                 upperBound=str(extract.max),
                 numPartitions=extract.partitions,
-                properties=self.config.jdbc.properties
+                properties=self.config.jdbc.properties,
             )
-            logger.info(
-                f"Extracting {extract.name} as {n_table_name} (partitioning on {extract.partition_column})")
+            logger.info(f"Extracting {extract.name} as {n_table_name} (partitioning on {extract.partition_column})")
         else:
             # Simple table dump
-            session.sparkContext.setJobDescription(
-                f'{extract.name}')
+            session.sparkContext.setJobDescription(f"{extract.name}")
             df = session.read.jdbc(
                 url=self.config.jdbc.url,
-                table=extract.name,
-                properties=self.config.jdbc.properties
+                table=f"{self.config.schema}.{extract.name}",
+                properties=self.config.jdbc.properties,
             )
-            logger.info(
-                f"Extracting {extract.name} (single thread)")
+            logger.info(f"Extracting {extract.name} (single thread)")
 
         if self.config.normalize_schema:
             # Normalize column names?
@@ -712,11 +748,17 @@ class Pipeline:
             df = self.empty_cols(df, extract.name, self.config.empty_columns)
 
         session.sparkContext.setLocalProperty("callSite.short", n_table_name)
-        df.write.save(f"{uri}/{n_table_name}", format=self.config.spark.format, mode="overwrite",
-                      timestampFormat=self.config.spark.timestamp_format, compression=self.config.spark.compression)
+        df.write.save(
+            f"{uri}/{n_table_name}",
+            format=self.config.spark.format,
+            mode="overwrite",
+            timestampFormat=self.config.spark.timestamp_format,
+            compression=self.config.spark.compression,
+        )
 
-        final_uri = f"{uri}/{n_table_name}/part-*.{self.config.spark.format.lower()}" + \
-            (".gz" if self.config.spark.compression == "gzip" else "")
+        final_uri = f"{uri}/{n_table_name}/part-*.{self.config.spark.format.lower()}" + (
+            ".gz" if self.config.spark.compression == "gzip" else ""
+        )
 
         return final_uri
 
@@ -736,7 +778,7 @@ class Pipeline:
             # Nothing to do here
             return extract
 
-        if self.config.schemaonly == False and self.config.target_uri is not None:
+        if not self.config.schemaonly and self.config.target_uri is not None:
             extract_uri = self._extract(extract, self.config.target_uri)
             extract.extract_uri = extract_uri
             extract.extract_date = datetime.now()
@@ -744,37 +786,36 @@ class Pipeline:
             # Suggest a recommended partition size based on the actual extract size (for next run)
             # only resizes based on GCS targets, for now
             if extract.partitions is not None and extract.partitions > 0 and "gs://" in extract_uri:
-                extract.gcs_bytes = self.retryer(
-                    self.gcp.get_size_bytes, extract_uri)
+                extract.gcs_bytes = self.retryer(self.gcp.get_size_bytes, extract_uri)
                 if extract.gcs_bytes < self.config.target_partition_size_bytes:
                     # Table does not need partitioning
                     logger.info(
-                        f"{extract.name} < {self.config.target_partition_size_bytes} bytes, will no longer partition")
+                        f"{extract.name} < {self.config.target_partition_size_bytes} bytes, will no longer partition"
+                    )
                     extract.partition_column = None
                     extract.predicates = None
                     extract.partitions = None
                 else:
-                    recommendation = round(
-                        extract.gcs_bytes / self.config.target_partition_size_bytes)
+                    recommendation = round(extract.gcs_bytes / self.config.target_partition_size_bytes)
                     if recommendation > 1 and recommendation != extract.partitions:
                         logger.info(
-                            f"Adjusted partitions on {extract.name} from {extract.partitions} to {recommendation} for next run")
+                            f"Adjusted partitions on {extract.name} from {extract.partitions} to {recommendation} for next run"
+                        )
                         extract.partitions = recommendation
                         extract.introspect_date = None  # triggers new introspection next run
 
-        self._save_schema(extract, self.config.target_uri,
-                          self.gcp.upload_from_string)
+        if self.config.target_uri is not None:
+            self._save_schema(extract, self.config.target_uri, self.gcp.upload_from_string)
         return extract
 
-    def _save_schema(self, extract: Extract, target_uri: str, upload_from_string: str):
+    def _save_schema(self, extract: Extract, target_uri: str, upload_from_string: Callable):
         # Save schema as JSON
         json_schema = json.dumps(extract.bq_schema, indent=4)
         if "gs://" not in target_uri:
-            with open(f"{target_uri}/{normalize_str(extract.name)}/schema.json", "wt") as f:
+            with open(f"{target_uri}/{normalize_str(extract.name)}/schema.json", "w") as f:
                 f.write(json_schema)
         else:
-            self.retryer(self.gcp.upload_from_string, json_schema,
-                         f"{target_uri}/{normalize_str(extract.name)}/schema.json")
+            self.retryer(upload_from_string, json_schema, f"{target_uri}/{normalize_str(extract.name)}/schema.json")
 
     def load(self, extract: Extract) -> Extract:
         """Loads an Extract into BigQuery
@@ -790,53 +831,54 @@ class Pipeline:
 
         # Load into BigQuery
         if self.config.target_dataset is not None:
-            if self.config.schemaonly == False and extract.rows > 0:
+            if not self.config.schemaonly and extract.rows is not None and extract.rows > 0:
                 # Load from GCS into BQ
                 bq_rows: int = 0
                 bq_bytes: int = 0
                 if self.config.target_dataset is not None:
                     logger.info(
-                        f"Loading {extract.name} into BigQuery as {normalized_table_name} from {extract.extract_uri}")
-                    bq_rows, bq_bytes = self.retryer(self.gcp.bigquery_load, extract.extract_uri, f"{self.config.target_dataset}.{normalized_table_name}",
-                                                     self.config.spark.format, extract.bq_schema, "Loaded by Dumpty")
+                        f"Loading {extract.name} into BigQuery as {normalized_table_name} from {extract.extract_uri}"
+                    )
+                    bq_rows, bq_bytes = self.retryer(  # type: ignore[misc]
+                        self.gcp.bigquery_load,
+                        extract.extract_uri,
+                        f"{self.config.target_dataset}.{normalized_table_name}",
+                        self.config.spark.format,
+                        extract.bq_schema,
+                        "Loaded by Dumpty",
+                    )
                 extract.rows_loaded = bq_rows
                 extract.bq_bytes = bq_bytes
             else:
                 # Create empty table directly
                 self.gcp.bigquery_create_table(
-                    f"{self.config.target_dataset}.{normalized_table_name}", extract.bq_schema)
+                    f"{self.config.target_dataset}.{normalized_table_name}", extract.bq_schema
+                )
                 extract.rows_loaded = 0
                 extract.bq_bytes = 0
 
         return extract
-    
-    
-    def reconcile(self, table_names: List[str]):
-        """Checks if a list of table names exist in TinyDB and SQL database
-            :param table_names: List of table names to validate against database
-            :raises: :class:`.ValidationException` when a table is not found. Use this
-            to fail early if you are not sure if the tables are actually in the SQL database.
-        """
-        logger.info(
-            f"Reconciling list of tables against schema {self.config.schema}")
-        sql_tables = self._inspector.get_table_names(schema=self.config.schema)
-        not_found = [t for t in table_names if t.lower() not in (
-            table.lower() for table in sql_tables)]
-        if len(not_found) > 0:
-            raise ValidationException(
-                f"Could not find these tables in {self.config.schema}: {','.join(not_found)}")
 
-    def reconcile_view(self, view_names: List[str]):
-        """Checks if a list of view names exist in TinyDB and SQL database
-            :param view_names: List of view names to validate against database
-            :raises: :class:`.ValidationException` when a view is not found. Use this
-            to fail early if you are not sure if the views are actually in the SQL database.
+    def reconcile(self, table_names: list[str]):
+        """Checks if a list of table names exist in TinyDB and SQL database
+        :param table_names: List of table names to validate against database
+        :raises: :class:`.ValidationError` when a table is not found. Use this
+        to fail early if you are not sure if the tables are actually in the SQL database.
         """
-        logger.info(
-            f"Reconciling list of views against schema {self.config.schema}")
-        sql_views = self._inspector.get_view_names(schema=self.config.schema)
-        not_found = [t["name"] for t in view_names if t["name"].lower() not in (
-            view.lower() for view in sql_views)]
+        logger.info(f"Reconciling list of tables against schema {self.config.schema}")
+        sql_tables = self._inspector.get_table_names(schema=self.config.schema)
+        not_found = [t for t in table_names if t.lower() not in (table.lower() for table in sql_tables)]
         if len(not_found) > 0:
-            raise ValidationException(
-                f"Could not find these views in {self.config.schema}: {','.join(not_found)}")
+            raise ValidationError(f"Could not find these tables in {self.config.schema}: {','.join(not_found)}")
+
+    def reconcile_view(self, view_names: list[str]):
+        """Checks if a list of view names exist in TinyDB and SQL database
+        :param view_names: List of view names to validate against database
+        :raises: :class:`.ValidationError` when a view is not found. Use this
+        to fail early if you are not sure if the views are actually in the SQL database.
+        """
+        logger.info(f"Reconciling list of views against schema {self.config.schema}")
+        sql_views = self._inspector.get_view_names(schema=self.config.schema)
+        not_found = [t for t in view_names if t.lower() not in (view.lower() for view in sql_views)]
+        if len(not_found) > 0:
+            raise ValidationError(f"Could not find these views in {self.config.schema}: {','.join(not_found)}")

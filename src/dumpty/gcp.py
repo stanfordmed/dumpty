@@ -1,31 +1,36 @@
 import os
 import re
 from pathlib import PurePath
-from typing import List
 from urllib.parse import urlparse
 
+import google.api_core.exceptions as core_exceptions
+from google.cloud.bigquery import AccessEntry
 from google.cloud.bigquery import Client as BigqueryClient
-from google.cloud.bigquery import (CreateDisposition, Dataset, AccessEntry,
-                                   DatasetReference, LoadJobConfig, TableReference, Table,
-                                   SchemaField, SourceFormat, WriteDisposition)
-from google.cloud.exceptions import NotFound
-from google.cloud.storage import Blob, Bucket
-from google.cloud.storage import Client as StorageClient
-from google.cloud.bigquery import Client
+from google.cloud.bigquery import CreateDisposition
+from google.cloud.bigquery import Dataset
+from google.cloud.bigquery import DatasetReference
+from google.cloud.bigquery import LoadJobConfig
 from google.cloud.bigquery import QueryJobConfig
 from google.cloud.bigquery import QueryPriority
+from google.cloud.bigquery import SchemaField
+from google.cloud.bigquery import SourceFormat
+from google.cloud.bigquery import Table
+from google.cloud.bigquery import TableReference
+from google.cloud.bigquery import WriteDisposition
 from google.cloud.bigquery.retry import DEFAULT_RETRY
-import google.api_core.exceptions as core_exceptions
+from google.cloud.exceptions import NotFound
+from google.cloud.storage import Blob
+from google.cloud.storage import Bucket
+from google.cloud.storage import Client as StorageClient
+
 from dumpty import logger
 
 
 class GCP:
-    """GCP helper functions using a shared client instance
-    """
+    """GCP helper functions using a shared client instance"""
 
     def __init__(self):
-        """Initialize a :class:`.GCP` instance. 
-        """
+        """Initialize a :class:`.GCP` instance."""
         self._storage_client = StorageClient()
         self._bigquery_client = BigqueryClient()
 
@@ -47,10 +52,10 @@ class GCP:
         bytes = 0
         for blob in blobs:
             if glob and "*" in glob:
-                if PurePath(blob.name).match(glob):
-                    bytes += blob.size
+                if blob.name and PurePath(blob.name).match(glob):
+                    bytes += blob.size or 0
             else:
-                bytes += blob.size
+                bytes += blob.size or 0
         return bytes
 
     def upload_from_string(self, data: str, uri: str, content_type="application/json"):
@@ -59,64 +64,76 @@ class GCP:
         """
         matches = re.match("gs://(.*?)/(.*)", uri)
         if matches:
-            bucket, name = matches.groups()
+            bucket_name, name = matches.groups()
         else:
             raise Exception(f"Invalid GCS URI {uri}")
-        bucket: Bucket = self._storage_client.bucket(bucket)
+        bucket: Bucket = self._storage_client.bucket(bucket_name)
         blob: Blob = bucket.blob(name)
         blob.upload_from_string(data=data, content_type=content_type)
 
-    def bigquery_create_dataset(self, dataset_ref: str, description: str = None, location: str = "US", labels: dict = {}, access_entries: List[dict] = None, drop: bool = False) -> Dataset:
+    def bigquery_create_dataset(
+        self,
+        dataset_ref: str,
+        description: str | None = None,
+        location: str = "US",
+        labels: dict | None = None,
+        access_entries: list[dict] | None = None,
+        drop: bool = False,
+    ) -> Dataset:
         """
         Creates a Dataset in BigQuery
         """
+        if labels is None:
+            labels = {}
         logger.info(f"Using dataset {dataset_ref}")
         exists = False
         ref = DatasetReference.from_string(dataset_ref)
         try:
-            dataset_ref: Dataset = self._bigquery_client.get_dataset(ref)
+            dataset: Dataset = self._bigquery_client.get_dataset(ref)
             if drop:
-                logger.info(f"Dropping dataset {dataset_ref.dataset_id}")
-                self._bigquery_client.delete_dataset(
-                    dataset_ref, not_found_ok=True, delete_contents=True)
-                dataset_ref: Dataset = Dataset(ref)
+                logger.info(f"Dropping dataset {dataset.dataset_id}")
+                self._bigquery_client.delete_dataset(dataset, not_found_ok=True, delete_contents=True)
+                dataset = Dataset(ref)
             else:
                 exists = True
         except NotFound:
-            dataset_ref: Dataset = Dataset(ref)
+            dataset = Dataset(ref)
 
-        dataset_ref.description = description
-        dataset_ref.location = location
-        dataset_ref.labels = labels
+        dataset.description = description
+        dataset.location = location
+        dataset.labels = labels
 
         if access_entries is not None:
-            updated_entries = list(
-                dataset_ref.access_entries) if dataset_ref.access_entries is not None else []
+            updated_entries = list(dataset.access_entries) if dataset.access_entries is not None else []
             for entry in access_entries:
-                entry = AccessEntry.from_api_repr(entry)
-                if entry not in dataset_ref.access_entries:
-                    updated_entries.append(entry)
-            dataset_ref.access_entries = updated_entries
+                ae = AccessEntry.from_api_repr(entry)
+                if ae not in dataset.access_entries:
+                    updated_entries.append(ae)
+            dataset.access_entries = updated_entries
 
         if exists:
-            logger.debug(
-                f"Dataset {dataset_ref.dataset_id} already exists, updating")
+            logger.debug(f"Dataset {dataset.dataset_id} already exists, updating")
             if access_entries is not None:
-                return self._bigquery_client.update_dataset(dataset_ref, fields=["description", "location", "labels", "access_entries"])
-            return self._bigquery_client.update_dataset(dataset_ref, fields=["description", "location", "labels"])
+                return self._bigquery_client.update_dataset(
+                    dataset, fields=["description", "location", "labels", "access_entries"]
+                )
+            return self._bigquery_client.update_dataset(dataset, fields=["description", "location", "labels"])
         else:
-            return self._bigquery_client.create_dataset(dataset_ref)
+            return self._bigquery_client.create_dataset(dataset)
 
-    def bigquery_create_table(self, table_ref: str, schema: List[dict], description: str = None, labels: dict = {}) -> Table:
+    def bigquery_create_table(
+        self, table_ref: str, schema: list[dict], description: str | None = None, labels: dict | None = None
+    ) -> Table:
         """
         Creates a Table in BigQuery
         """
-        table_ref: Table = Table(TableReference.from_string(table_ref), schema)
-        table_ref.description = description
-        table_ref.labels = labels
-        logger.info(
-            f"Creating empty table {table_ref.dataset_id}.{table_ref.table_id}")
-        return self._bigquery_client.create_table(table_ref, exists_ok=True)
+        if labels is None:
+            labels = {}
+        table = Table(TableReference.from_string(table_ref), schema)
+        table.description = description
+        table.labels = labels
+        logger.info(f"Creating empty table {table.dataset_id}.{table.table_id}")
+        return self._bigquery_client.create_table(table, exists_ok=True)
 
     def bigquery_create_view(self, view_ref: str, sql: str, materialized: bool = False):
         """
@@ -143,8 +160,8 @@ class GCP:
         logger.debug(f"Updating labels on dataset {dataset_ref}")
         dataset = self._bigquery_client.update_dataset(dataset, ["labels"])
 
-    def bigquery_append_access_entries(self, dataset_ref: str, access_entries: List[dict]):
-        """Appends a list of access entries to an existing BigQuery dataset. 
+    def bigquery_append_access_entries(self, dataset_ref: str, access_entries: list[dict]):
+        """Appends a list of access entries to an existing BigQuery dataset.
 
         Args:
             dataset_ref (str): project_id.dataset_id reference to dataset
@@ -155,16 +172,17 @@ class GCP:
         updated_entries = list(dataset.access_entries)
 
         for entry in access_entries:
-            entry = AccessEntry.from_api_repr(entry)
-            if entry not in dataset.access_entries:
-                updated_entries.append(entry)
+            ae = AccessEntry.from_api_repr(entry)
+            if ae not in dataset.access_entries:
+                updated_entries.append(ae)
 
         dataset.access_entries = updated_entries
         logger.debug(f"Appended new access entries to dataset {dataset_ref}")
-        dataset = self._bigquery_client.update_dataset(
-            dataset, ['access_entries'])
+        dataset = self._bigquery_client.update_dataset(dataset, ["access_entries"])
 
-    def bigquery_load(self, uri: str, table: str, format: str, schema: List[dict], description: str = None, location="US"):
+    def bigquery_load(
+        self, uri: str, table: str, format: str, schema: list[dict], description: str | None = None, location="US"
+    ):
         """
         Loads a dataset into BigQuery from GCS bucket
         """
@@ -177,37 +195,35 @@ class GCP:
         elif format == "orc":
             source_format = SourceFormat.ORC
         else:
-            raise Exception("Unknown format {}".format(format))
+            raise Exception(f"Unknown format {format}")
 
         try:
             # Update description of the table if it exists (setting this in LoadJobConfig() below gives an exception when we do not drop and recreate the dataset)
             table_exists = self._bigquery_client.get_table(table)
             table_exists.description = description
-            table_exists = self._bigquery_client.update_table(
-                table_exists, ["description"]
-            )
+            table_exists = self._bigquery_client.update_table(table_exists, ["description"])
         except NotFound:
             pass
         job_config = LoadJobConfig(
-            schema=[SchemaField.from_api_repr(field)
-                    for field in schema],
+            schema=[SchemaField.from_api_repr(field) for field in schema],
             source_format=source_format,
             create_disposition=CreateDisposition.CREATE_IF_NEEDED,
-            write_disposition=WriteDisposition.WRITE_TRUNCATE
+            write_disposition=WriteDisposition.WRITE_TRUNCATE,
         )
 
         # Some tables may take longer to load than the default deadline of 600s
-        load_job = self._bigquery_client.load_table_from_uri(uri, table, retry=DEFAULT_RETRY.with_timeout(
-            1800), job_config=job_config, location=location)
+        load_job = self._bigquery_client.load_table_from_uri(
+            uri, table, retry=DEFAULT_RETRY.with_timeout(1800), job_config=job_config, location=location
+        )
         load_job.result()
 
         return load_job.output_rows, load_job.output_bytes
-    
+
     def bigquery_run_query(
         self,
         sql: str,
         destination_table: TableReference,
-        writeDisposition: str = "CREATE_IF_NEEDED",
+        write_disposition: str = "CREATE_IF_NEEDED",
         drop: bool = False,
     ):
         """Run query in BigQuery."""
@@ -216,11 +232,9 @@ class GCP:
             if drop:
                 self._bigquery_client.delete_table(destination_table, not_found_ok=True)
             job_config.destination = destination_table
-            job_config.write_disposition = writeDisposition
+            job_config.write_disposition = write_disposition
         try:
             query_job = self._bigquery_client.query(sql, job_config=job_config)
             return query_job.result()
         except Exception as e:
             raise e
-
-    

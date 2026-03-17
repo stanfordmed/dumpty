@@ -9,5 +9,5 @@
         "*.yaml": "jinja-yaml",
         "macros.j2": "jinja"
     },
-    "dbt.queryLimit": 500,
+ "python.terminal.useEnvFile": true
 }

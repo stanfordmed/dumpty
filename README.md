@@ -81,6 +81,16 @@ uv pip install dumpty-*.whl
 - You will need to download Spark JAR files (not included here) for your database and GCP platform (see `spark.driver.extraClassPath` in [config.yaml.example](config.yaml.example))
 - Java 11+ is recommended for performance reasons
 
+### GCS connector JAR
+
+To write to GCS, Spark needs the [GCS connector shaded JAR](https://github.com/GoogleCloudDataproc/hadoop-connectors/releases). You can let Dumpty download and cache it automatically by adding to your config:
+
+```yaml
+gcs_connector_jar_url: "https://github.com/GoogleCloudDataproc/hadoop-connectors/releases/download/v4.0.3/gcs-connector-4.0.3-shaded.jar"
+```
+
+The JAR is downloaded once to `~/.cache/dumpty/` and its path is injected into `spark.jars` at startup. To use a different version, change the URL. To manage the JAR yourself (e.g. already listed in `spark.driver.extraClassPath`), omit this field.
+
 ## Usage
 
 ### Configuration
@@ -125,7 +135,8 @@ In short you want to make sure your PyODBC does __not__ link to iodbc:
 
 ### Homebrew
 - `brew install unixodbc`
-  - Follow directions [here](https://learn.microsoft.com/en-us/sql/connect/odbc/linux-mac/install-microsoft-odbc-driver-sql-server-macos?view=sql-server-ver16)
+  - Follow directions [here](https://learn.microsoft.com/en-
+  - us/sql/connect/odbc/linux-mac/install-microsoft-odbc-driver-sql-server-macos?view=sql-server-ver16)
    - `sudo ln -s /opt/homebrew/etc/odbcinst.ini /etc/odbcinst.ini`
    - `sudo ln -s /opt/homebrew/etc/odbc.ini /etc/odbc.ini`
 
@@ -139,3 +150,53 @@ export LDFLAGS="-L/opt/homebrew/opt/unixodbc/lib"
 export CPPFLAGS="-I/opt/homebrew/opt/unixodbc/include"
 uv sync
 ```
+
+## Testing
+
+### Unit tests
+
+Run all unit tests (no external dependencies required):
+
+```sh
+uv run pytest -m "not integration and not e2e"
+```
+
+### Integration tests
+
+Integration tests spin up an MSSQL container via Docker and test database connectivity and introspection:
+
+```sh
+uv run pytest -m integration
+```
+
+Requires Docker to be running.
+
+### End-to-end tests
+
+E2E tests exercise the full pipeline: MSSQL → Spark JDBC → GCS → BigQuery → verification → cleanup. They require Docker **and** a GCP project with BigQuery/GCS access.
+
+#### Environment variables
+
+| Variable | Required | Description |
+|---|---|---|
+| `DUMPTY_E2E_GCP_PROJECT` | Yes | GCP project ID |
+| `DUMPTY_E2E_GCS_BUCKET` | Yes | GCS bucket name (no `gs://` prefix) |
+| `DUMPTY_E2E_CREDENTIALS` | No | Path to service account JSON. Uses Application Default Credentials if unset. |
+
+#### Running
+
+```sh
+export DUMPTY_E2E_GCP_PROJECT=my-project
+export DUMPTY_E2E_GCS_BUCKET=my-test-bucket
+export DUMPTY_E2E_CREDENTIALS=/path/to/credentials.json  # optional
+
+uv run pytest -m e2e -v --timeout=600
+```
+
+The test will:
+1. Start a local MSSQL container and seed 7 tables (~6,000 rows) covering all type mappings, all three partitioning strategies (Spark bound-based, julienne/predicate, single-thread), NULL handling, column normalization, and column redaction.
+2. Run `dumpty` via `main()` to extract all tables through Spark to GCS and load into BigQuery.
+3. Query BigQuery to verify row counts, schema types, data integrity, Unicode round-tripping, NULL patterns, and `empty_columns` redaction.
+4. Delete the BigQuery dataset and GCS staging data on completion (even if tests fail).
+
+Tests are skipped automatically if the required environment variables are not set.
