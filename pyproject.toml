@@ -1,111 +1,183 @@
+[build-system]
+requires = ["hatchling", "hatch-vcs"]
+build-backend = "hatchling.build"
+
+[tool.hatch.version]
+source = "vcs"
+fallback-version = "0.0.0.dev0"
+
+[tool.hatch.build.hooks.vcs]
+version-file = "src/dumpty/_version.py"
+
+[tool.semantic_release]
+commit_parser = "conventional"
+commit_message = "chore(release): {version} [skip ci]"
+major_on_zero = false
+tag_format = "v{version}"
+version_source = "tag"
+
+[tool.semantic_release.changelog]
+mode = "update"
+default_templates = { changelog_file = "CHANGELOG.adoc" }
+exclude_commit_patterns = [
+  '''chore(?:\([^)]*?\))?: .+''',
+  '''ci(?:\([^)]*?\))?: .+''',
+  '''refactor(?:\([^)]*?\))?: .+''',
+  '''style(?:\([^)]*?\))?: .+''',
+  '''test(?:\([^)]*?\))?: .+''',
+  '''build\((?!deps\): .+)''',
+  '''Merged? .*''',
+]
+
+[tool.semantic_release.branches.main]
+match = "main"
+prerelease = false
+
+[tool.semantic_release.branches.development]
+match = "development"
+prerelease = true
+
+[tool.semantic_release.branches."v*"]
+match = "^v\\d+\\.\\d+$"
+prerelease = false
+
+[tool.semantic_release.commit_parser_options]
+allowed_tags = ["build", "chore", "ci", "docs", "feat", "fix", "perf", "refactor", "style", "test"]
+minor_tags = ["feat"]
+patch_tags = ["fix", "perf"]
+
+[tool.coverage.paths]
+source = ["src/"]
+tests = ["src/"]
+
+[tool.coverage.run]
+branch = true
+source = ["src/"]
+omit = [
+    ".venv/*",
+    "*/test*",
+    "*/conftest.py",
+    "*/__init__.py",
+]
+
+[tool.coverage.report]
+show_missing = true
+
+[tool.ruff]
+target-version = "py312"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["B", "C4", "D", "E", "F", "I", "N", "S", "TID", "W"]
+ignore = [
+    "E203",   # whitespace before ':'
+    "E501",   # line too long (handled by line-length)
+    "C901",   # too complex
+    "S608",   # possible SQL injection
+    "S311",   # random generators for cryptographic purposes
+    "N802",   # function name should be lowercase
+    "TID251", # banned-api (we don't want to ban specific APIs)
+    "TID253", # banned-module-level-imports (we don't want to ban module imports)
+    "D301",   # use r""" if any backslashes in docstring (conflicts with Click \b formatting)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"test_*.py" = ["S101", "N806", "S106"]
+"tests/*" = ["S101", "N806", "S106"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.isort]
+force-single-line = true
+lines-after-imports = 2
+
+[tool.mypy]
+strict = true
+warn_unreachable = true
+pretty = true
+show_column_numbers = true
+show_error_codes = true
+show_error_context = true
+
+[[tool.mypy.overrides]]
+module = "tests.*"
+disallow_untyped_calls = false
+disallow_untyped_defs = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests/"]
+addopts = "--cov-fail-under=20"
+timeout = 90
+python_files = ["test_*.py"]
+python_functions = ["test_*"]
+norecursedirs = [
+    "*.egg-info",
+    ".git",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".vscode",
+]
+
 [project]
-name = "dumpty" 
-version = "2.0.0"
+name = "dumpty"
+dynamic = ["version"]
 description = "Incremental backup utility for a popular reporting database"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.12"
 license = {file = "LICENSE"}
 keywords = ["database"]
 authors = [
-  {name = "Joseph Mesterhazy", email = "jmesterh@gmail.com" }
+  {name = "Joseph Mesterhazy", email = "jmesterh@gmail.com"},
 ]
 maintainers = [
-  {name = "RT OSS Admin", email = "rit-oss-admin@stanford.edu" }
+  {name = "RT OSS Admin", email = "rit-oss-admin@stanford.edu"},
 ]
-classifiers = [  
-  # How mature is this project? Common values are
-  #   3 - Alpha
-  #   4 - Beta
-  #   5 - Production/Stable
+classifiers = [
   "Development Status :: 3 - Alpha",
-
-  # Indicate who your project is intended for
   "Intended Audience :: Healthcare Industry",
   "Topic :: Database",
-
-  # Pick your license as you wish
   "License :: OSI Approved :: Apache Software License",
-
-  # Specify the Python versions you support here. In particular, ensure
-  # that you indicate you support Python 3. These classifiers are *not*
-  # checked by "pip install". See instead "python_requires" below.
   "Programming Language :: Python :: 3",
-  "Programming Language :: Python :: 3.9",
-  "Programming Language :: Python :: 3.10",
-  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3 :: Only",
 ]
-
-# This field lists other packages that your project depends on to run.
-# Any package you put here will be installed by pip when your project is
-# installed, so they must be valid existing projects.
-#
-# For an analysis of this field vs pip's requirements files see:
-# https://packaging.python.org/discussions/install-requires-vs-requirements/
-dependencies = [ 
-  "PyYAML>=6.0",
-  "pyaml>=21.10.1",
-  "pyspark>=3.3.2",
-  "tomli>=2.0.1",
-  "Jinja2>=3.1.2",
-  "dataclass-wizard>=0.22.2",
-  "google-cloud-bigquery>=3.4.2",
-  "SQLAlchemy!=1.4.33,<2.0,>=1.4.20",
+dependencies = [
+  "PyYAML>=6.0.3",
+  "pyaml>=26.2.1",
+  "pyspark>=4.1.1",
+  "tomli>=2.4.0",
+  "Jinja2>=3.1.6",
+  "dataclass-wizard>=0.39.1",
+  "google-cloud-bigquery>=3.40.1",
+  "google-cloud-storage>=3.9.0",
+  "SQLAlchemy>=2.0",
   "pysparkextra>=0.4.2",
-  "alive-progress>=3.0.1",
-  "psutil>=5.9.4",
-  "tenacity>=8.1.0",
-  "google-cloud-storage>=2.7.0",
-  "tinydb-serialization>=2.1.0",
-  "pyodbc>=4.0.35",
-  "funcy>=1.18"
+  "alive-progress>=3.3.0",
+  "psutil>=7.2.2",
+  "tenacity>=9.1.4",
+  "tinydb>=4.8.2",
+  "tinydb-serialization>=2.2.0",
+  "pyodbc>=5.3.0",
+  "funcy>=2.0",
 ]
 
+[project.urls]
+Homepage = "https://github.com/stanfordmed/dumpty"
+"Bug Reports" = "https://github.com/stanfordmed/dumpty/issues"
+Source = "https://github.com/stanfordmed/dumpty"
 
-# List additional groups of dependencies here (e.g. development
-# dependencies). Users will be able to install these using the "extras"
-# syntax, for example:
-#
-#   $ pip install sampleproject[dev]
-#
-# Similar to `dependencies` above, these must be valid existing
-# projects.
-[project.optional-dependencies] # Optional
-dev = ["check-manifest"]
-test = ["coverage"]
-
-# List URLs that are relevant to your project
-#
-# This field corresponds to the "Project-URL" and "Home-Page" metadata fields:
-# https://packaging.python.org/specifications/core-metadata/#project-url-multiple-use
-# https://packaging.python.org/specifications/core-metadata/#home-page-optional
-#
-# Examples listed include a pattern for specifying where the package tracks
-# issues, where the source is hosted, where to say thanks to the package
-# maintainers, and where to support the project financially. The key is
-# what's used to render the link text on PyPI.
-[project.urls]  # Optional
-"Homepage" = "https://github.com/pypa/sampleproject"
-"Bug Reports" = "https://github.com/pypa/sampleproject/issues"
-"Funding" = "https://donate.pypi.org"
-"Say Thanks!" = "http://saythanks.io/to/example"
-"Source" = "https://github.com/pypa/sampleproject/"
-
-# The following would provide a command line executable called `sample`
-# which executes the function `main` from this package when invoked.
-[project.scripts]  # Optional
+[project.scripts]
 dumpty = "dumpty.main:main"
 
-# This is configuration specific to the `setuptools` build backend.
-# If you are using a different build backend, you will need to change this.
-[tool.setuptools]
-# If there are data files included in your packages that need to be
-# installed, specify them here.
-#package-data = {"dumpty" = ["*.jar"]}
-#include-package-data = true
-
-[build-system]
-# These are the assumed default build requirements from pip:
-# https://pip.pypa.io/en/stable/reference/pip/#pep-517-and-518-support
-requires = ["setuptools>=43.0.0", "wheel", "build"]
-build-backend = "setuptools.build_meta"
+[dependency-groups]
+dev = [
+    "coverage[toml]",
+    "mypy",
+    "ruff",
+    "pytest",
+    "pytest-cov",
+    "pytest-mock",
+    "pytest-timeout>=2.3.1",
+    "python-semantic-release>=10.5.3",
+]
