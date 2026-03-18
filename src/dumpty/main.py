@@ -204,8 +204,14 @@ def config_from_args(argv: list[str] | None) -> Config:
     if config.target_dataset is not None and "." not in config.target_dataset:
         parser.error("Dataset must be in format project.dataset")
 
-    if config.target_uri is not None and "gs://" not in config.target_uri:
-        parser.error(f"Loading a dataset requires gs:// URI (uri is {config.target_uri}")
+    if (
+        config.target_dataset is not None
+        and config.target_uri is not None
+        and not config.target_uri.startswith("gs://")
+    ):
+        parser.error(
+            f"Loading a dataset requires gs:// URI (uri is {config.target_uri})"
+        )
 
     if config.target_uri is not None and config.target_uri.endswith("/"):
         parser.error("target_uri cannot end with /")
