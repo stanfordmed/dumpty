@@ -1,37 +1,41 @@
-import datetime
 import threading
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+from dataclasses import field
+from datetime import datetime
 from decimal import Decimal
-from typing import List, Set
 
 from funcy import omit
-from tinydb import JSONStorage, Query, TinyDB
+from tinydb import JSONStorage
+from tinydb import Query
+from tinydb import TinyDB
 from tinydb.middlewares import CachingMiddleware
-from tinydb_serialization import SerializationMiddleware, Serializer
+from tinydb_serialization import SerializationMiddleware
+from tinydb_serialization import Serializer
 from tinydb_serialization.serializers import DateTimeSerializer
 
 
 @dataclass
 class Extract:
-    """This class represents the state of an Extract as it flows through the ELT pipeline. 
+    """This class represents the state of an Extract as it flows through the ELT pipeline.
     This class is serialized as JSON in TinyDB so no complex data types.
     """
+
     name: str
-    min: str = None
-    max: str = None
-    rows: int = None
-    introspect_date: datetime = None
-    refresh_date: datetime = None
-    partition_column: str = None
-    predicates: List[str] = field(default_factory=list)
-    extract_uri: str = None
-    extract_date: datetime = None
-    partitions: int = None
-    rows_loaded: int = None
-    bq_bytes: int = None
-    gcs_bytes: int = None
-    bq_schema: List[dict] = field(default_factory=list)
-    warnings: List[str] = field(default_factory=list)
+    min: int | None = None
+    max: int | None = None
+    rows: int | None = None
+    introspect_date: datetime | None = None
+    refresh_date: datetime | None = None
+    partition_column: str | None = None
+    predicates: list[str] | None = None
+    extract_uri: str | None = None
+    extract_date: datetime | None = None
+    partitions: int | None = None
+    rows_loaded: int | None = None
+    bq_bytes: int | None = None
+    gcs_bytes: int | None = None
+    bq_schema: list[dict] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
 
     def consistent(self) -> bool:
         """Returns true if the row count in SQL server matches the rows loaded in BigQuery"""
@@ -59,27 +63,25 @@ class FloatSerializer(Serializer):
 
 
 class ExtractDB:
-    """Creates a TinyDB-backed persistant database of Extract histories 
-    """
+    """Creates a TinyDB-backed persistent database of Extract histories"""
 
-    def __init__(self, db_file: str, default_table_name: str = None):
+    def __init__(self, db_file: str, default_table_name: str | None = None):
         self._db_file = db_file
         self._default_table_name = default_table_name
         self.mutex = threading.Lock()
 
     def __enter__(self):
         serialization = SerializationMiddleware(JSONStorage)
-        serialization.register_serializer(DateTimeSerializer(), 'TinyDate')
-        serialization.register_serializer(DecimalSerializer(), 'TinyDecimal')
-        serialization.register_serializer(FloatSerializer(), 'TinyFloat')
-        self._db: TinyDB = TinyDB(self._db_file, sort_keys=True,
-                                  indent=4, storage=CachingMiddleware(serialization))
+        serialization.register_serializer(DateTimeSerializer(), "TinyDate")
+        serialization.register_serializer(DecimalSerializer(), "TinyDecimal")
+        serialization.register_serializer(FloatSerializer(), "TinyFloat")
+        self._db: TinyDB = TinyDB(self._db_file, sort_keys=True, indent=4, storage=CachingMiddleware(serialization))
         # Set the TinyDB table name to the schema
         self._db.default_table_name = self._default_table_name if self._default_table_name is not None else "_default"
 
-        self.extracts: Set[Extract] = {}
+        self.extracts: dict[str, Extract] = {}
         for doc in self._db.all():
-            self.extracts[doc['name']] = Extract(**doc)
+            self.extracts[doc["name"]] = Extract(**doc)
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
@@ -87,9 +89,9 @@ class ExtractDB:
 
     def save(self, extract: Extract):
         """Saves an extract to the TinyDB database (excludes a few keys)
-           :param extract: extract instance to save to TinyDB
+        :param extract: extract instance to save to TinyDB
         """
-        to_save = omit(extract.__dict__, 'bq_schema')
+        to_save = dict(omit(extract.__dict__, "bq_schema"))
         with self.mutex:
             self._db.upsert(to_save, Query().name == extract.name)
 

@@ -1,13 +1,13 @@
-"""Dumpty exception classes.
-"""
+"""Dumpty exception classes."""
 
 
-class ValidationException(Exception):
+
+class ValidationError(Exception):
     """Errors in validation"""
 
 
-class ExtractException(Exception):
-    def __init__(self, extract, message: str = None):
+class ExtractError(Exception):
+    def __init__(self, extract, message: str | None = None):
         self.extract = extract
         if message is None:
             self.message = f"Exception extracting {extract.name}"
