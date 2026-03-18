@@ -193,11 +193,16 @@ class Pipeline:
     @staticmethod
     def empty_cols(df: DataFrame, table_name: str, drop_cols: str) -> DataFrame:
         drop_col_names: list[str] = []
-        for col_name in drop_cols.split(","):
-            if col_name.rsplit(".")[0].lower() == table_name.lower():
-                drop_col_names.append(col_name.rsplit(".")[-1])
+        for col_spec in drop_cols.split(","):
+            col_spec = col_spec.strip()
+            if not col_spec:
+                continue
+            parts = [p.strip() for p in col_spec.split(".")]
+            if parts[0].lower() == table_name.lower():
+                col_name = parts[-1]
+                drop_col_names.append(col_name)
                 # Dataframe drop doesn't work. When it saves the data, the columns still exists. e.g. df.drop(col_name.rsplit('.')[-1])
-                logger.info(f"Table {table_name} - Drop column: {col_name.rsplit('.')[-1]}")
+                logger.info(f"Table {table_name} - Drop column: {col_name}")
         if len(drop_col_names) > 0:
             return df.select([c for c in df.columns if c not in drop_col_names])
         else:
