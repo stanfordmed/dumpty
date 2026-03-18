@@ -659,10 +659,13 @@ class TestE2EPipeline:
     # ── empty_columns redaction ──
 
     def test_redact_me_column_empty(self, e2e_bq_client, e2e_dataset_ref):
-        """The redact_me column should be entirely absent (dropped by empty_columns)."""
+        """The redact_me column should exist in BQ but contain only NULLs (data stripped, schema preserved)."""
         table = e2e_bq_client.get_table(f"{e2e_dataset_ref}.nullable_stress")
         col_names = {field.name for field in table.schema}
-        assert "redact_me" not in col_names
+        assert "redact_me" in col_names
+        query = f"SELECT COUNT(*) AS c FROM `{e2e_dataset_ref}.nullable_stress` WHERE redact_me IS NOT NULL"
+        rows = list(e2e_bq_client.query(query).result())
+        assert rows[0]["c"] == 0
 
     # ── BIGNUMERIC precision ──
 

@@ -203,19 +203,6 @@ class Pipeline:
         else:
             return df
 
-    def _filter_bq_schema(self, bq_schema: list[dict], table_name: str) -> list[dict]:
-        """Remove columns from BQ schema that are listed in empty_columns for this table."""
-        if self.config.empty_columns is None:
-            return bq_schema
-        drop_col_names: set[str] = set()
-        for col_spec in self.config.empty_columns.split(","):
-            parts = col_spec.strip().split(".")
-            if parts[0].lower() == table_name.lower():
-                drop_col_names.add(parts[-1].lower())
-        if not drop_col_names:
-            return bq_schema
-        return [field for field in bq_schema if field["name"].lower() not in drop_col_names]
-
     @staticmethod
     def normalize_df(df: DataFrame) -> DataFrame:
         return df.select([col(x).alias(normalize_str(x)) for x in df.columns])
@@ -333,7 +320,7 @@ class Pipeline:
         table = Table(extract.name, self._metadata, autoload_with=self.engine)
 
         # Create BQ schema definition
-        extract.bq_schema = self._filter_bq_schema(self.bq_schema(table), extract.name)
+        extract.bq_schema = self.bq_schema(table)
 
         if not self.config.schemaonly:
             if extract.introspect_date is not None:
@@ -629,7 +616,7 @@ class Pipeline:
         table = Table(extract.name, self._metadata, autoload_with=self.engine)
 
         # Create BQ schema definition
-        extract.bq_schema = self._filter_bq_schema(self.bq_schema(table), extract.name)
+        extract.bq_schema = self.bq_schema(table)
 
         if not self.config.schemaonly:
             # Never been introspected, or partitioning was modified from prior run
