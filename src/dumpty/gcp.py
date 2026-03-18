@@ -107,7 +107,7 @@ class GCP:
             updated_entries = list(dataset.access_entries) if dataset.access_entries is not None else []
             for entry in access_entries:
                 ae = AccessEntry.from_api_repr(entry)
-                if ae not in dataset.access_entries:
+                if ae not in updated_entries:
                     updated_entries.append(ae)
             dataset.access_entries = updated_entries
 
