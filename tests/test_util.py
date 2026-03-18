@@ -1,6 +1,5 @@
 """Unit tests for dumpty.util module."""
 
-import pytest
 from sqlalchemy import literal_column
 from sqlalchemy import select
 
