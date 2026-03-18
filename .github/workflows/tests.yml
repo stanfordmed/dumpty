@@ -22,7 +22,7 @@ jobs:
 
       - name: Install ODBC driver for SQL Server
         run: |
-          curl -fsSL https://packages.microsoft.com/keys/microsoft.asc | sudo gpg --dearmor -o /usr/share/keyrings/microsoft-prod.gpg
+          curl -fsSL https://packages.microsoft.com/keys/microsoft.asc | gpg --batch --no-tty --dearmor | sudo tee /usr/share/keyrings/microsoft-prod.gpg > /dev/null
           echo "deb [arch=amd64,arm64,armhf signed-by=/usr/share/keyrings/microsoft-prod.gpg] https://packages.microsoft.com/ubuntu/$(lsb_release -rs)/prod $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/mssql-release.list
           sudo apt-get update
           sudo ACCEPT_EULA=Y apt-get install -y msodbcsql18 unixodbc-dev
