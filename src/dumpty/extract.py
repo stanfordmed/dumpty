@@ -63,7 +63,7 @@ class FloatSerializer(Serializer):
 
 
 class ExtractDB:
-    """Creates a TinyDB-backed persistant database of Extract histories"""
+    """Creates a TinyDB-backed persistent database of Extract histories"""
 
     def __init__(self, db_file: str, default_table_name: str | None = None):
         self._db_file = db_file
