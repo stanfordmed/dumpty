@@ -135,10 +135,10 @@ In short you want to make sure your PyODBC does __not__ link to iodbc:
 
 ### Homebrew
 - `brew install unixodbc`
-  - Follow directions [here](https://learn.microsoft.com/en-
-  - us/sql/connect/odbc/linux-mac/install-microsoft-odbc-driver-sql-server-macos?view=sql-server-ver16)
+  - Follow directions [here](https://learn.microsoft.com/en-us/sql/connect/odbc/linux-mac/install-microsoft-odbc-driver-sql-server-macos?view=sql-server-ver16)
    - `sudo ln -s /opt/homebrew/etc/odbcinst.ini /etc/odbcinst.ini`
    - `sudo ln -s /opt/homebrew/etc/odbc.ini /etc/odbc.ini`
+
 
 ### Build and install PyODBC
 
