@@ -684,10 +684,6 @@ class Pipeline:
         if session.sparkContext._jsc is None:
             raise ExtractError(extract, f"Spark context lost trying to extract {extract.name}, is Spark shutting down?")
 
-        session = self._spark_session
-        if session.sparkContext._jsc is None:
-            raise ExtractError(extract, f"Spark context lost trying to extract {extract.name}, is Spark shutting down?")
-
         # Always normalize table name
         n_table_name = normalize_str(extract.name)
 
