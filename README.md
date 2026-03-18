@@ -2,6 +2,7 @@
 **A utility for bulk migration of large on-premise databases to BigQuery** 
 
 [![Apache license](https://img.shields.io/badge/license-apache-brightgreen.svg)](LICENSE.txt)
+[![Tests](https://github.com/stanfordmed/dumpty/actions/workflows/tests.yml/badge.svg)](https://github.com/stanfordmed/dumpty/actions/workflows/tests.yml)
 
 ## About
 
