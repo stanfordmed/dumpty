@@ -1,6 +1,9 @@
 import logging
+import os
 import random
 import re
+import shutil
+import tempfile
 import urllib.request
 from pathlib import Path
 
@@ -21,10 +24,41 @@ def ensure_gcs_shaded_jar(url: str) -> str:
     cache_dir = Path.home() / ".cache" / "dumpty"
     cache_dir.mkdir(parents=True, exist_ok=True)
     jar_path = cache_dir / jar_name
-    if not jar_path.exists():
-        logger.info("Downloading %s ...", url)
-        urllib.request.urlretrieve(url, jar_path)  # noqa: S310
+
+    # If a cached JAR exists and is non-empty, reuse it.
+    if jar_path.exists():
+        try:
+            if jar_path.stat().st_size > 0:
+                return str(jar_path)
+            logger.warning("Cached JAR at %s is empty; re-downloading.", jar_path)
+        except OSError:
+            logger.warning("Could not stat cached JAR at %s; re-downloading.", jar_path)
+
+    logger.info("Downloading %s ...", url)
+    tmp_file = None
+    try:
+        # Create a temporary file in the same directory for an atomic move.
+        with tempfile.NamedTemporaryFile(delete=False, dir=cache_dir) as tmp:
+            tmp_file = Path(tmp.name)
+            with urllib.request.urlopen(url, timeout=60) as response:  # noqa: S310
+                shutil.copyfileobj(response, tmp)
+
+        # Basic validation: ensure the downloaded file is non-empty.
+        if tmp_file.stat().st_size <= 0:
+            raise OSError(f"Downloaded JAR from {url} is empty.")
+
+        # Atomically move the completed download into place.
+        os.replace(tmp_file, jar_path)
         logger.info("Saved to %s", jar_path)
+    except Exception:
+        # Clean up temporary file on failure.
+        if tmp_file is not None:
+            try:
+                tmp_file.unlink(missing_ok=True)
+            except Exception:
+                logger.debug("Failed to remove temporary file %s", tmp_file, exc_info=True)
+        raise
+
     return str(jar_path)
 
 
