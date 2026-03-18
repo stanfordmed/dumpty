@@ -65,10 +65,21 @@ def _require_env(name: str) -> str:
 
 
 def _batch_insert(conn, sql_template: str, rows: list[str]):
-    """Execute a batch of INSERT statements to avoid thousands of round-trips."""
+    """Execute a batch of INSERT statements to avoid thousands of round-trips.
+
+    If ``sql_template`` is a non-empty string, each entry in ``rows`` is formatted
+    into the template using ``sql_template.format(row=row)`` before execution.
+    When ``sql_template`` is empty (the current usage), ``rows`` is treated as a
+    list of complete SQL statements and executed as before.
+    """
     batch_size = 100
     for i in range(0, len(rows), batch_size):
-        batch = ";".join(rows[i : i + batch_size])
+        batch_rows = rows[i : i + batch_size]
+        if sql_template:
+            statements = [sql_template.format(row=row) for row in batch_rows]
+        else:
+            statements = batch_rows
+        batch = ";".join(statements)
         conn.execute(text(batch))
     conn.commit()
 
