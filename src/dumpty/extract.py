@@ -38,7 +38,10 @@ class Extract:
     warnings: list[str] = field(default_factory=list)
 
     def consistent(self) -> bool:
-        """Returns true if the row count in SQL server matches the rows loaded in BigQuery"""
+        """Returns true if the row count in SQL server matches the rows loaded in BigQuery.
+        If rows is None the row count was intentionally skipped, so the check is bypassed."""
+        if self.rows is None:
+            return True
         return self.rows == self.rows_loaded
 
 

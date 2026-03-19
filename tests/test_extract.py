@@ -33,6 +33,16 @@ class TestExtract:
         e = Extract("t", rows=100, rows_loaded=None)
         assert e.consistent() is False
 
+    def test_consistent_when_both_zero(self):
+        """rows=0 and rows_loaded=0 must be consistent (empty table/view loaded correctly)."""
+        e = Extract("t", rows=0, rows_loaded=0)
+        assert e.consistent() is True
+
+    def test_consistent_when_rows_none(self):
+        """rows=None means the count was intentionally skipped (e.g. vv_ views); consistency check is bypassed."""
+        e = Extract("t", rows=None, rows_loaded=0)
+        assert e.consistent() is True
+
     def test_predicates_default_none(self):
         e = Extract("t")
         assert e.predicates is None
