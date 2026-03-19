@@ -22,18 +22,31 @@ spark:
     # https://github.com/GoogleCloudDataproc/hadoop-connectors/pull/264
     spark.hadoop.fs.gs.outputstream.upload.cache.size: "67108864"
     # PySpark 4.x bundles spark-hadoop-cloud; GCS connector is managed by gcs_connector_jar_url below.
-    # Only include JDBC driver and BigQuery connector here.
-    spark.driver.extraClassPath: "mssql-jdbc-12.8.1.jre11.jar:spark-4.0-bigquery-0.44.0.jar"
+    # The BigQuery Spark connector JAR is NOT needed — dumpty loads to BQ via the Python client library.
+    # Only the JDBC driver belongs here. The GCS connector JAR is appended automatically
+    # at runtime when gcs_connector_jar_url is set (see below).
+    spark.driver.extraClassPath: "mssql-jdbc-12.8.1.jre11.jar"
     spark.sql.session.timeZone: "America/Los_Angeles"
     spark.sql.jsonGenerator.ignoreNullFields": "false"
     spark.hadoop.google.cloud.auth.service.account.enable: "true"
     spark.hadoop.google.cloud.auth.service.account.json.keyfile: "{{CREDENTIALS}}"
-    # NOTE: Below require Hadoop 3.3.5+ jars installed
+    # Explicitly register gs:// FileSystem implementations. Avoids relying on Java
+    # ServiceLoader discovery, which is unreliable in PySpark 4.x. These are set
+    # automatically when gcs_connector_jar_url is configured, but if you manage JARs
+    # manually (no gcs_connector_jar_url), uncomment and set them here.
+    #spark.hadoop.fs.gs.impl: "com.google.cloud.hadoop.fs.gcs.GoogleHadoopFileSystem"
+    #spark.hadoop.fs.AbstractFileSystem.gs.impl: "com.google.cloud.hadoop.fs.gcs.GoogleHadoopFS"
+    # NOTE: The Hadoop manifest committer settings below require the GCS connector JAR.
+    # These improve GCS write performance but are OPTIONAL. Remove if you hit
+    # SessionStateBuilder initialization errors with PySpark 4.x.
     spark.hadoop.mapreduce.outputcommitter.factory.scheme.gcs: "org.apache.hadoop.mapreduce.lib.output.committer.manifest.ManifestCommitterFactory"
     spark.hadoop.mapreduce.outputcommitter.factory.scheme.gs: "org.apache.hadoop.mapreduce.lib.output.committer.manifest.ManifestCommitterFactory"
     spark.hadoop.mapreduce.manifest.committer.delete.target.files: "true"
-    spark.sql.parquet.output.committer.class: "org.apache.spark.internal.io.cloud.BindingParquetOutputCommitter"
-    spark.sql.sources.commitProtocolClass: "org.apache.spark.internal.io.cloud.PathOutputCommitProtocol"
+    # NOTE: These two settings cause SessionStateBuilder failures in PySpark 4.x (pip package)
+    # because PathOutputCommitProtocol in spark-hadoop-cloud requires the GCS connector to already
+    # be initialized. Remove them if running PySpark 4.x — Spark will use its default commit protocol.
+    #spark.sql.parquet.output.committer.class: "org.apache.spark.internal.io.cloud.BindingParquetOutputCommitter"
+    #spark.sql.sources.commitProtocolClass: "org.apache.spark.internal.io.cloud.PathOutputCommitProtocol"
     spark.executor.memory: "8g"
     spark.driver.memory: "16g"
     spark.executor.defaultJavaOptions: "-XX:+UseG1GC"
@@ -77,7 +90,8 @@ load_workers: {{BQ_LOAD_THREADS}}
 log_file: {{EXTRACT_LOG_FILE}}
 
 # Optional: URL of the GCS connector shaded JAR. When set, Dumpty will download
-# the JAR to ~/.cache/dumpty/ on first run and automatically add it to spark.jars.
+# the JAR to ~/.cache/dumpty/ on first run and automatically add it to spark.driver.extraClassPath
+# so the gs:// FileSystem is registered at JVM startup (required for PySpark 4.x).
 # Remove this line if you manage JARs manually via spark.driver.extraClassPath.
 gcs_connector_jar_url: "https://github.com/GoogleCloudDataproc/hadoop-connectors/releases/download/v4.0.3/gcs-connector-4.0.3-shaded.jar"
 

@@ -209,9 +209,7 @@ def config_from_args(argv: list[str] | None) -> Config:
         and config.target_uri is not None
         and not config.target_uri.startswith("gs://")
     ):
-        parser.error(
-            f"Loading a dataset requires gs:// URI (uri is {config.target_uri})"
-        )
+        parser.error(f"Loading a dataset requires gs:// URI (uri is {config.target_uri})")
 
     if config.target_uri is not None and config.target_uri.endswith("/"):
         parser.error("target_uri cannot end with /")
@@ -282,14 +280,16 @@ def main(args: list[str] | None = None) -> None:
         retry=retry_if_not_exception_type(BadRequest),
     )
 
-    # If gcs_connector_jar_url is set, download the JAR and inject its path into spark.jars.
+    # If gcs_connector_jar_url is set, download the JAR and inject its path into
+    # spark.driver.extraClassPath (not spark.jars) so Hadoop's FileSystem registry
+    # can find the gs:// implementation at JVM startup, before the session is built.
     if config.gcs_connector_jar_url:
         gcs_jar = ensure_gcs_shaded_jar(config.gcs_connector_jar_url)
-        existing_jars = config.spark.properties.get("spark.jars", "")
-        jar_paths = [j for j in existing_jars.split(",") if j] if existing_jars else []
-        if gcs_jar not in jar_paths:
-            jar_paths.append(gcs_jar)
-        config.spark.properties["spark.jars"] = ",".join(jar_paths)
+        existing_cp = config.spark.properties.get("spark.driver.extraClassPath", "")
+        cp_entries = [e for e in existing_cp.split(":") if e] if existing_cp else []
+        if gcs_jar not in cp_entries:
+            cp_entries.append(gcs_jar)
+        config.spark.properties["spark.driver.extraClassPath"] = ":".join(cp_entries)
 
     # Create spark logdir if needed
     spark_log_dir = config.spark.properties.get("spark.eventLog.dir")
