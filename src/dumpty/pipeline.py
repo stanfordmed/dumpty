@@ -150,6 +150,9 @@ class Pipeline:
         self._metadata = MetaData(schema=config.schema)
         self._inspector: Inspector = inspect(engine)
 
+        if self.engine.dialect.name == "mssql":
+            self._register_udts()
+
         self.introspect_queue: Queue[Extract] = Queue(config.introspect_workers)
         self.extract_queue: Queue[Extract] = Queue(config.extract_workers)
         self.load_queue: Queue[Extract] = Queue(config.load_workers)
@@ -173,6 +176,30 @@ class Pipeline:
         self.extract_workers = QueueWorkerPool(extract_step, self.extract_queue.maxsize)
 
         self.load_workers = QueueWorkerPool(load_step, self.load_queue.maxsize)
+
+    def _register_udts(self) -> None:
+        """Register SQL Server user-defined types so SQLAlchemy reflects them as their base system type."""
+        with self.engine.connect() as conn:
+            rows = conn.execute(
+                text(
+                    "SELECT t.name, bt.name "
+                    "FROM sys.types t "
+                    "JOIN sys.types bt ON t.system_type_id = bt.user_type_id "
+                    "WHERE t.is_user_defined = 1"
+                )
+            ).all()
+        ischema: dict = self.engine.dialect.ischema_names  # type: ignore[attr-defined]
+        registered = 0
+        for udt_name, base_type in rows:
+            if udt_name not in ischema:
+                sa_type = ischema.get(base_type)
+                if sa_type is not None:
+                    ischema[udt_name] = sa_type
+                    registered += 1
+                else:
+                    logger.warning(f"UDT '{udt_name}' has unmapped base type '{base_type}'")
+        if registered:
+            logger.debug(f"Registered {registered} SQL Server user-defined types")
 
     def __enter__(self):
         ctx = (

@@ -21,7 +21,9 @@ spark:
     # 2023/05/24 - added cache size to hopefully fix "410 Gone" errors 
     # https://github.com/GoogleCloudDataproc/hadoop-connectors/pull/264
     spark.hadoop.fs.gs.outputstream.upload.cache.size: "67108864"
-    spark.driver.extraClassPath: "spark-hadoop-cloud_2.13-4.1.1.jar:mssql-jdbc-12.8.1.jre11.jar:gcs-connector-4.0.3-shaded.jar:spark-4.0-bigquery-0.44.0.jar"
+    # PySpark 4.x bundles spark-hadoop-cloud; GCS connector is managed by gcs_connector_jar_url below.
+    # Only include JDBC driver and BigQuery connector here.
+    spark.driver.extraClassPath: "mssql-jdbc-12.8.1.jre11.jar:spark-4.0-bigquery-0.44.0.jar"
     spark.sql.session.timeZone: "America/Los_Angeles"
     spark.sql.jsonGenerator.ignoreNullFields": "false"
     spark.hadoop.google.cloud.auth.service.account.enable: "true"

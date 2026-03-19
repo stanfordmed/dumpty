@@ -174,4 +174,31 @@ def mssql_setup(mssql_engine):
             conn.execute(text(f"INSERT INTO [{TEST_SCHEMA}].[no_pk_table] (col_a, col_b) VALUES ({i}, 'val{i}')"))
         conn.commit()
 
+        # User-defined types (UDTs) and a table that uses them
+        conn.execute(text("CREATE TYPE [VDT_SERIALNUMBER] FROM BIGINT"))
+        conn.execute(text("CREATE TYPE [VDT_DATETIME] FROM DATETIME"))
+        conn.execute(text("CREATE TYPE [VDT_FLAG] FROM CHAR(1)"))
+        conn.execute(text("CREATE TYPE [VDT_NAME] FROM NVARCHAR(64)"))
+        conn.commit()
+
+        conn.execute(
+            text(
+                f"""
+                CREATE TABLE [{TEST_SCHEMA}].[udt_table] (
+                    ser VDT_SERIALNUMBER NOT NULL PRIMARY KEY,
+                    event_time VDT_DATETIME,
+                    active VDT_FLAG,
+                    label VDT_NAME
+                )
+                """
+            )
+        )
+        conn.commit()
+        conn.execute(
+            text(
+                f"INSERT INTO [{TEST_SCHEMA}].[udt_table] (ser, event_time, active, label) VALUES (1, '2026-01-01', 'Y', 'test')"
+            )
+        )
+        conn.commit()
+
     yield mssql_engine

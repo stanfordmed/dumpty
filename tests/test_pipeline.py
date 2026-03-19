@@ -173,3 +173,42 @@ class TestDataFrameHelpers:
         mock_df.columns = ["id", "name", "ssn"]
         Pipeline.empty_cols(mock_df, "patients", "patients.ssn")
         mock_df.select.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# UDT registration (requires MSSQL container with UDTs created in conftest)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+class TestUdtRegistration:
+    @patch("dumpty.pipeline.GCP")
+    def test_udts_registered_in_ischema(self, mock_gcp_cls, mssql_setup, pipeline_config, retryer):
+        Pipeline(mssql_setup, retryer, pipeline_config)
+        ischema = mssql_setup.dialect.ischema_names
+        assert "VDT_SERIALNUMBER" in ischema
+        assert "VDT_DATETIME" in ischema
+        assert "VDT_FLAG" in ischema
+        assert "VDT_NAME" in ischema
+
+    @patch("dumpty.pipeline.GCP")
+    def test_udt_table_reflects_correct_types(self, mock_gcp_cls, mssql_setup, pipeline_config, retryer):
+        Pipeline(mssql_setup, retryer, pipeline_config)
+        metadata = MetaData(schema=TEST_SCHEMA)
+        table = Table("udt_table", metadata, autoload_with=mssql_setup)
+        schema = Pipeline.bq_schema(table)
+
+        by_name = {s["name"]: s for s in schema}
+        assert by_name["ser"]["type"] == "INT64"
+        assert by_name["event_time"]["type"] == "DATETIME"
+        assert by_name["active"]["type"] == "STRING"
+        assert by_name["label"]["type"] == "STRING"
+
+    @patch("dumpty.pipeline.GCP")
+    def test_udt_introspect_succeeds(self, mock_gcp_cls, mssql_setup, pipeline_config, retryer):
+        pipeline = Pipeline(mssql_setup, retryer, pipeline_config)
+        extract = Extract("udt_table")
+        result = pipeline.introspect(extract)
+        assert result.rows == 1
+        assert result.bq_schema is not None
+        assert len(result.bq_schema) == 4
